@@ -61,8 +61,8 @@ services:
 
   sre-agent:
     build:
-      context: ./files/sre-agent
-      dockerfile: Dockerfile
+      context: ./files
+      dockerfile: sre-agent/Dockerfile
     image: auto-sre-agent:dev
     container_name: auto-sre-agent-dev
     hostname: sre-agent
@@ -92,6 +92,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       - ./files/sre-agent:/app:cached
+      - ./files/frontend:/app/static:cached
     ports:
       - "8096:8096"
     command: uvicorn app:app --host 0.0.0.0 --port 8096 --reload

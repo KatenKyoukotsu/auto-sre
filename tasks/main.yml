@@ -28,6 +28,12 @@
     dest: "{{ auto_sre_dir }}/sre-agent/"
     mode: preserve
 
+- name: Copy frontend sources
+  copy:
+    src: "files/frontend/"
+    dest: "{{ auto_sre_dir }}/frontend/"
+    mode: preserve
+
 - name: Copy alert analyzer sources
   copy:
     src: "files/alert-analyzer/"

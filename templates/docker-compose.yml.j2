@@ -64,7 +64,9 @@ services:
       - auto-sre-net
 
   sre-agent:
-    build: ./sre-agent
+    build:
+      context: .
+      dockerfile: sre-agent/Dockerfile
     image: auto-sre-agent:local
     container_name: auto-sre-agent
     hostname: sre-agent
