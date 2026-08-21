@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS alert_analysis (
     correlated_group TEXT,
     root_cause TEXT,
     suggested_actions TEXT,
-    confidence TEXT,
+    confidence DOUBLE PRECISION,
     raw_alerts TEXT NOT NULL,
     llm_model VARCHAR(100)
 );

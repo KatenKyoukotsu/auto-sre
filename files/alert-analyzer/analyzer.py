@@ -230,7 +230,7 @@ class AlertAnalyzer:
                     "correlated_group": fingerprints,
                     "root_cause": group.get("root_cause"),
                     "suggested_actions": group.get("actions"),
-                    "confidence": {"score": group.get("confidence", 0)},
+                    "confidence": group.get("confidence", 0),
                     "raw_alerts": [a for a in alerts_data if a["fingerprint"] in fingerprints],
                     "llm_model": self.llm.model,
                 }
@@ -252,7 +252,7 @@ class AlertAnalyzer:
                 "correlated_group": [fp],
                 "root_cause": "Не удалось коррелировать с другими алертами",
                 "suggested_actions": ["Проверить алерт вручную"],
-                "confidence": {"score": 0.3},
+                "confidence": 0.3,
                 "raw_alerts": [a for a in alerts_data if a["fingerprint"] == fp],
                 "llm_model": self.llm.model,
             }

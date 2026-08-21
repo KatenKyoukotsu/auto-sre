@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Index, select, desc, func
+from sqlalchemy import Column, Float, Integer, String, Text, DateTime, Index, select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -36,7 +36,7 @@ class AlertAnalysis(Base):
     correlated_group = Column(Text, nullable=True)  # JSON array of grouped alert fingerprints
     root_cause = Column(Text, nullable=True)
     suggested_actions = Column(Text, nullable=True)
-    confidence = Column(Text, nullable=True)  # JSON with confidence scores
+    confidence = Column(Float, nullable=True)  # 0..1
     raw_alerts = Column(Text, nullable=False)  # JSON of original alerts
     llm_model = Column(String(100), nullable=True)
 
@@ -84,7 +84,7 @@ class AlertStore:
                     correlated_group=json.dumps(analysis.get("correlated_group", [])),
                     root_cause=analysis.get("root_cause"),
                     suggested_actions=json.dumps(analysis.get("suggested_actions", [])),
-                    confidence=json.dumps(analysis.get("confidence", {})),
+                    confidence=analysis.get("confidence"),
                     raw_alerts=json.dumps(analysis.get("raw_alerts", [])),
                     llm_model=analysis.get("llm_model"),
                 )
