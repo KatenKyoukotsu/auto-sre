@@ -111,3 +111,97 @@
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
 }
+
+/* --- тосты --- */
+.toast-container {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 100;
+}
+
+.toast {
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 12px 18px;
+  font-size: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  animation: toast-in var(--dur-med) var(--ease-out);
+}
+
+.toast.error { border-color: var(--critical); }
+
+.toast.leaving {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity var(--dur-med) ease, transform var(--dur-med) ease;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --- скелетоны загрузки --- */
+.skeleton-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgba(79, 140, 255, .07) 50%, transparent 70%);
+  animation: ai-shimmer 1.6s linear infinite;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  margin-bottom: 10px;
+}
+
+.skeleton-line.w-30 { width: 30%; }
+.skeleton-line.w-60 { width: 60%; }
+.skeleton-line.w-90 { width: 90%; }
+
+/* --- кнопка в состоянии загрузки --- */
+.btn.is-loading {
+  pointer-events: none;
+  opacity: .75;
+}
+
+.btn.is-loading::after {
+  content: "";
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-left: 8px;
+  vertical-align: -1px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .35);
+  border-top-color: #fff;
+  animation: ai-spin .9s linear infinite;
+}
+
+/* --- появление новых карточек (живой поллинг) --- */
+.card-enter {
+  animation: card-enter .45s var(--ease-out);
+}
+
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}

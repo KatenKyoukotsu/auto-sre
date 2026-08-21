@@ -10,4 +10,9 @@
   --high: #ff8a3d;
   --medium: #ffd23d;
   --low: #3dbb6d;
+
+  /* Анимации */
+  --dur-fast: 150ms;
+  --dur-med: 300ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }

@@ -1,7 +1,10 @@
-// Стена аномалий: статус продакшена, список находок, запуск сканов.
+// Стена аномалий: статус продакшена, живой список находок, запуск сканов.
 
 import { api } from './api.js';
 import { formatDate, formatConfidence } from './format.js';
+import { toast, setButtonLoading } from './effects.js';
+
+const POLL_INTERVAL_MS = 15000;
 
 const statusBox = document.getElementById('status');
 const findingsBox = document.getElementById('findings');
@@ -10,33 +13,10 @@ const fsStart = document.getElementById('fs-start');
 const fsEnd = document.getElementById('fs-end');
 const fsStatus = document.getElementById('fs-status');
 
-// ---- статус-бар ----
+// id -> { acknowledged } уже отрисованных находок
+const rendered = new Map();
 
-function renderStatus(health) {
-  statusBox.textContent = '';
-  const dot = document.createElement('span');
-  dot.className = 'status-dot';
-
-  const info = document.createElement('div');
-  const strong = document.createElement('strong');
-  strong.textContent = 'Состояние продакшена';
-
-  const meta = document.createElement('div');
-  meta.className = 'status-meta';
-  meta.append(`Модель: ${health.model} · Последний скан: ${health.last_scan || 'ещё не выполнялся'}`);
-
-  if (health.last_error) {
-    const err = document.createElement('div');
-    err.className = 'error-line';
-    err.textContent = `Ошибка скана: ${health.last_error}`;
-    meta.appendChild(err);
-  }
-
-  info.append(strong, meta);
-  statusBox.append(dot, info);
-}
-
-// ---- карточки находок ----
+// ---- утилиты DOM ----
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -51,8 +31,44 @@ function labeled(label, value) {
   return p;
 }
 
-function renderFinding(f) {
-  const card = el('article', `card severity-${f.severity}` + (f.acknowledged ? ' acknowledged' : ''));
+// ---- скелетоны ----
+
+function renderSkeletons(box, count) {
+  box.textContent = '';
+  for (let i = 0; i < count; i++) {
+    const card = el('div', 'skeleton-card');
+    card.append(
+      el('div', 'skeleton-line w-30'),
+      el('div', 'skeleton-line w-90'),
+      el('div', 'skeleton-line w-60'),
+    );
+    box.appendChild(card);
+  }
+}
+
+// ---- статус-бар ----
+
+function renderStatus(health) {
+  statusBox.textContent = '';
+  const dot = el('span', 'status-dot');
+
+  const info = el('div');
+  info.appendChild(el('strong', null, 'Состояние продакшена'));
+
+  const meta = el('div', 'status-meta');
+  meta.append(`Модель: ${health.model} · Последний скан: ${health.last_scan || 'ещё не выполнялся'}`);
+  if (health.last_error) {
+    meta.appendChild(el('div', 'error-line', `Ошибка скана: ${health.last_error}`));
+  }
+
+  info.appendChild(meta);
+  statusBox.append(dot, info);
+}
+
+// ---- карточки находок ----
+
+function renderFinding(f, isNew) {
+  const card = el('article', `card severity-${f.severity}` + (f.acknowledged ? ' acknowledged' : '') + (isNew ? ' card-enter' : ''));
 
   const head = el('div', 'card-head');
   head.append(
@@ -85,24 +101,56 @@ function renderFinding(f) {
   return card;
 }
 
-function renderFindings(findings) {
-  findingsBox.textContent = '';
+function appendFindings(findings, markNew) {
+  const emptyBox = findingsBox.querySelector('.empty');
   if (!findings.length) {
-    findingsBox.appendChild(
-      el('div', 'empty', 'Аномалий не обнаружено. Прод в порядке (или ещё не сканировался).'),
-    );
+    if (!rendered.size && !emptyBox) {
+      findingsBox.appendChild(
+        el('div', 'empty', 'Аномалий не обнаружено. Прод в порядке (или ещё не сканировался).'),
+      );
+    }
     return;
   }
-  for (const f of findings) findingsBox.appendChild(renderFinding(f));
+  if (emptyBox) emptyBox.remove();
+
+  // API отдаёт находки по убыванию времени; новые вставляем сверху в исходном порядке
+  const newCards = [];
+  for (const f of findings) {
+    const known = rendered.get(f.id);
+    if (known) {
+      if (!known.acknowledged && f.acknowledged) {
+        known.acknowledged = true;
+        const card = findingsBox.querySelector(`article[data-id="${f.id}"]`);
+        if (card) {
+          card.classList.add('acknowledged');
+          const btn = card.querySelector('.ack');
+          if (btn) btn.disabled = true;
+        }
+      }
+      continue;
+    }
+    rendered.set(f.id, { acknowledged: !!f.acknowledged });
+    const card = renderFinding(f, markNew);
+    card.dataset.id = f.id;
+    newCards.push(card);
+  }
+
+  const anchor = findingsBox.firstChild;
+  for (const card of newCards) findingsBox.insertBefore(card, anchor);
 }
 
 // ack через делегирование — карточки перерисовываются динамически
 findingsBox.addEventListener('click', async (e) => {
   const btn = e.target.closest('.ack');
   if (!btn || btn.disabled) return;
-  await api.ackFinding(btn.dataset.id);
-  btn.closest('article').classList.add('acknowledged');
   btn.disabled = true;
+  try {
+    await api.ackFinding(btn.dataset.id);
+    btn.closest('article').classList.add('acknowledged');
+  } catch (err) {
+    toast('Не удалось подтвердить находку: ' + err.message, 'error');
+    btn.disabled = false;
+  }
 });
 
 // ---- полный скан ----
@@ -130,12 +178,20 @@ document.querySelectorAll('.preset').forEach(btn => {
   btn.addEventListener('click', () => setPreset(parseInt(btn.dataset.hours, 10)));
 });
 
-document.getElementById('trigger-scan').addEventListener('click', async () => {
-  await api.triggerScan();
-  location.reload();
+document.getElementById('trigger-scan').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  setButtonLoading(btn, true);
+  try {
+    await api.triggerScan();
+    toast('Скан аномалий запущен');
+  } catch (err) {
+    toast('Не удалось запустить скан: ' + err.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
 });
 
-document.getElementById('trigger-full-scan').addEventListener('click', async () => {
+document.getElementById('trigger-full-scan').addEventListener('click', async (e) => {
   const start = toIso(fsStart.value);
   const end = toIso(fsEnd.value);
   if (!start || !end || start >= end) {
@@ -143,25 +199,38 @@ document.getElementById('trigger-full-scan').addEventListener('click', async () 
     fsStatus.classList.add('error');
     return;
   }
+  const btn = e.currentTarget;
+  setButtonLoading(btn, true);
   fsStatus.textContent = 'Запущено...';
   fsStatus.classList.remove('error');
   try {
     const data = await api.triggerFullScan(start, end);
     fsStatus.textContent = data.message || 'Запущено';
+    toast('Полное сканирование запущено');
   } catch (err) {
     fsStatus.textContent = 'Ошибка';
     fsStatus.classList.add('error');
+  } finally {
+    setButtonLoading(btn, false);
   }
 });
 
-// ---- начальная загрузка ----
+// ---- загрузка и живой поллинг ----
 
-Promise.all([api.getHealth(), api.getFindings(100)])
-  .then(([health, findings]) => {
-    renderStatus(health);
-    renderFindings(findings);
-  })
+renderSkeletons(findingsBox, 3);
+
+let firstLoad = true;
+
+async function pollTick() {
+  const [health, findings] = await Promise.all([api.getHealth(), api.getFindings(100)]);
+  renderStatus(health);
+  appendFindings(findings, !firstLoad);
+  firstLoad = false;
+}
+
+pollTick()
   .catch(err => {
     findingsBox.textContent = '';
     findingsBox.appendChild(el('div', 'empty error-line', 'Не удалось загрузить данные: ' + err.message));
-  });
+  })
+  .finally(() => setInterval(() => pollTick().catch(() => {}), POLL_INTERVAL_MS));

@@ -3,6 +3,7 @@
 import { api } from './api.js';
 import { formatDate } from './format.js';
 import { renderMarkdown } from './markdown.js';
+import { toast, setButtonLoading } from './effects.js';
 
 const contentBox = document.getElementById('blog-content');
 
@@ -38,7 +39,7 @@ function pollWhileGenerating(onDone) {
   setTimeout(async () => {
     try {
       const st = await api.getBlogStatus();
-      if (st.status !== 'generating') { onDone(); return; }
+      if (st.status !== 'generating') { onDone(st); return; }
     } catch (e) {}
     pollWhileGenerating(onDone);
   }, 1500);
@@ -139,33 +140,70 @@ function renderPost(p, animate) {
   return post;
 }
 
+// ---- скелетоны ----
+
+function renderSkeletons(count) {
+  contentBox.textContent = '';
+  for (let i = 0; i < count; i++) {
+    const card = el('div', 'skeleton-card');
+    card.append(
+      el('div', 'skeleton-line w-60'),
+      el('div', 'skeleton-line w-90'),
+      el('div', 'skeleton-line w-90'),
+      el('div', 'skeleton-line w-30'),
+    );
+    contentBox.appendChild(card);
+  }
+}
+
 // ---- кнопка генерации ----
 
-document.getElementById('trigger-blog').addEventListener('click', () => {
-  api.triggerBlog().then(() => location.reload());
+document.getElementById('trigger-blog').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  setButtonLoading(btn, true);
+  try {
+    await api.triggerBlog();
+    toast('Генерация поста запущена');
+    contentBox.textContent = '';
+    contentBox.appendChild(renderPending());
+    pollWhileGenerating(onGenerationDone);
+  } catch (err) {
+    toast('Не удалось запустить генерацию: ' + err.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
 });
 
-// ---- начальная загрузка ----
+function onGenerationDone(status) {
+  if (status && status.error) toast('Ошибка генерации поста: ' + status.error, 'error', 8000);
+  else toast('Новый пост опубликован');
+  loadPosts();
+}
 
-Promise.all([api.getBlogStatus(), api.getBlogPosts(30)])
-  .then(([status, posts]) => {
-    contentBox.textContent = '';
+// ---- загрузка ----
 
-    if (status.status === 'generating') {
-      contentBox.appendChild(renderPending(status.error));
-      pollWhileGenerating(() => location.reload());
+async function loadPosts() {
+  const [status, posts] = await Promise.all([api.getBlogStatus(), api.getBlogPosts(30)]);
+  contentBox.textContent = '';
+
+  if (status.status === 'generating') {
+    contentBox.appendChild(renderPending(status.error));
+    pollWhileGenerating(onGenerationDone);
+  }
+
+  if (!posts.length) {
+    if (status.status !== 'generating') {
+      contentBox.appendChild(el('div', 'empty', 'Постов пока нет. Первый дайджест появится после сканa.'));
     }
+    return;
+  }
 
-    if (!posts.length) {
-      if (status.status !== 'generating') {
-        contentBox.appendChild(el('div', 'empty', 'Постов пока нет. Первый дайджест появится после сканa.'));
-      }
-      return;
-    }
+  posts.forEach((p, i) => contentBox.appendChild(renderPost(p, i === 0)));
+}
 
-    posts.forEach((p, i) => contentBox.appendChild(renderPost(p, i === 0)));
-  })
-  .catch(err => {
-    contentBox.textContent = '';
-    contentBox.appendChild(el('div', 'empty error-line', 'Не удалось загрузить блог: ' + err.message));
-  });
+renderSkeletons(2);
+
+loadPosts().catch(err => {
+  contentBox.textContent = '';
+  contentBox.appendChild(el('div', 'empty error-line', 'Не удалось загрузить блог: ' + err.message));
+});
