@@ -16,16 +16,22 @@
     state: directory
     mode: 0755
 
-- name: Copy MCP server sources
+- name: Copy shared LLM client sources
   copy:
-    src: "files/mcp-vl/"
-    dest: "{{ auto_sre_dir }}/mcp-vl/"
+    src: "files/common/"
+    dest: "{{ auto_sre_dir }}/common/"
     mode: preserve
 
 - name: Copy SRE agent sources
   copy:
     src: "files/sre-agent/"
     dest: "{{ auto_sre_dir }}/sre-agent/"
+    mode: preserve
+
+- name: Copy alert analyzer sources
+  copy:
+    src: "files/alert-analyzer/"
+    dest: "{{ auto_sre_dir }}/alert-analyzer/"
     mode: preserve
 
 - name: Generate .env

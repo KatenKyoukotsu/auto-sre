@@ -1,12 +1,13 @@
 # Auto SRE — Ansible Role for LLM-Powered Log Anomaly Detection
 
 ## Project Type
-Ansible role that deploys three Docker services (defined in `templates/docker-compose.yml.j2`):
-- **postgres** (port 5432): PostgreSQL 16 for findings/blog/outbox storage
+Ansible role that deploys four Docker services (defined in `templates/docker-compose.yml.j2`):
+- **postgres** (port 5432): PostgreSQL 16 for findings/blog/outbox/alert_analysis storage
 - **kafka** (port 9092): KRaft mode Kafka for event streaming (findings, blog, scan events)
 - **sre-agent** (port 8096): FastAPI + APScheduler for periodic log scanning, LLM analysis, web UI, metrics
+- **alert-analyzer** (port 8097): FastAPI for Alertmanager webhook ingestion, alert batching + LLM correlation
 
-> **Note**: The `README.md` is outdated — it references `mcp-vl` and SQLite, but the actual deployment uses PostgreSQL + Kafka + direct Victoria Logs HTTP (no MCP proxy).
+> `README.md` is up to date (rewritten for the current architecture). Detailed docs live in `docs/`.
 
 ## Key Commands
 
@@ -40,6 +41,7 @@ curl http://<host>:8096/metrics          # Prometheus metrics (public)
 | Component | Path | Purpose |
 |-----------|------|---------|
 | Ansible tasks | `tasks/main.yml` | Copies sources, renders `.env` + `docker-compose.yml`, runs `docker compose up` |
+| Shared LLM client | `files/common/llm_client.py` | OpenAI-compatible client with retry + circuit breaker (used by alert-analyzer) |
 | sre-agent API | `files/sre-agent/app.py` | FastAPI + APScheduler + Basic Auth + Prometheus middleware |
 | SRE logic | `files/sre-agent/agent.py` | Rolling baseline anomaly detection + LLM analysis + dedup + Kafka outbox |
 | LLM client | `files/sre-agent/llm.py` | LiteLLM (OpenAI-compatible) with retry + circuit breaker |
@@ -49,12 +51,18 @@ curl http://<host>:8096/metrics          # Prometheus metrics (public)
 | Storage | `files/sre-agent/store.py` | PostgreSQL via SQLAlchemy 2.0 async (findings, blog, outbox) |
 | Metrics | `files/sre-agent/metrics.py` | 90+ Prometheus metrics definitions |
 | Alerting | `files/sre-agent/alerting/auto-sre-rules.yaml` | PrometheusRule: 25+ rules |
-| Templates | `templates/env.j2`, `docker-compose.yml.j2` | Rendered by Ansible with inventory vars |
+| alert-analyzer API | `files/alert-analyzer/app.py` | Alertmanager webhook + Basic Auth + flush task |
+| Alert batching | `files/alert-analyzer/analyzer.py` | Time/size windowing, dedup by fingerprint, LLM correlation |
+| Alert storage | `files/alert-analyzer/store.py` | PostgreSQL `alert_analysis` table (sharding-ready) |
+| Templates | `templates/env.j2`, `docker-compose.yml.j2`, `docker-compose.dev.yml.j2` | Rendered by Ansible with inventory vars |
 
 ## Entrypoints
 - **postgres**: `postgres` (healthcheck via `pg_isready`)
 - **kafka**: `kafka` KRaft (healthcheck via `kafka-broker-api-versions`)
 - **sre-agent**: `uvicorn app:app --host 0.0.0.0 --port 8096`
+- **alert-analyzer**: `uvicorn app:app --host 0.0.0.0 --port 8097`
+
+> **Build contexts**: sre-agent builds from `./sre-agent`; alert-analyzer builds from repo root (`context: .`, `dockerfile: alert-analyzer/Dockerfile`) so it can `COPY common/`. `files/common/` is the single source of truth for the shared LLM client — do not duplicate it inside service dirs.
 
 ## Environment Variables (from `templates/env.j2`)
 All injected via Ansible inventory. Key ones:
@@ -86,6 +94,12 @@ All injected via Ansible inventory. Key ones:
 - `AUTH_ENABLED` — `true`/`false` (default true)
 - `AUTH_USERNAME`, `AUTH_PASSWORD` — Basic Auth credentials
 
+### Alert-analyzer
+- `ALERT_BATCH_WINDOW_SEC` — batching window (default 300)
+- `ALERT_BATCH_MAX` — max alerts per batch (default 20)
+- `ALERT_DEDUP_WINDOW` — fingerprint dedup window in seconds (default 3600)
+- `FLUSH_INTERVAL` — periodic flush interval in seconds (default 60)
+
 ### Other
 - `LOG_LEVEL` — default `INFO`
 - `SHUTDOWN_TIMEOUT` — graceful shutdown wait (default 30s)
@@ -112,6 +126,20 @@ All injected via Ansible inventory. Key ones:
 | GET | `/blog` | Basic | Web UI: blog digest |
 | GET | `/static/*` | **None** | Static assets |
 
+## REST API (alert-analyzer, port 8097)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/webhook` | Basic* | Alertmanager webhook ingestion |
+| POST | `/webhook/test` | Basic* | Test webhook (no DB write) |
+| GET | `/api/analyses` | Basic* | List analyses (filters: `alertname`, `severity`, `status`, `since`) |
+| GET | `/api/analyses/{id}` | Basic* | Single analysis |
+| GET | `/api/stats` | Basic* | Buffer stats + counters |
+| POST | `/api/flush` | Basic* | Force-flush buffered alerts through LLM analysis |
+| GET | `/api/health` | **None** | Service status + buffer stats |
+| GET | `/metrics` | **None** | Prometheus metrics |
+
+\* controlled by `AUTH_ENABLED`. Alertmanager config example in `README.md`.
+
 ## Detection Logic (agent.py)
 1. Fetches error counts per stream in rolling windows (`HISTORY_HOURS` back, `WINDOW_MINUTES` each)
 2. Computes baseline (mean/std), flags spike if `current > max(mean + 3*std, 2*mean)` AND `current >= MIN_ABS_SPIKE (20)`
@@ -129,7 +157,7 @@ All injected via Ansible inventory. Key ones:
 
 ## Common Tasks for Agents
 - **Modify detection thresholds** → Edit constants in `agent.py` (lines ~25-38) or add env vars
-- **Change LLM prompt** → Edit `llm.py` methods `analyze_logs` / `write_blog_post`
+- **Change LLM prompt** → Edit `llm.py` methods `analyze_logs` / `write_blog_post` (sre-agent) or `analyzer.py` ALERT_ANALYSIS_*_PROMPT (alert-analyzer)
 - **Add API endpoint** → Edit `app.py`, follow existing patterns (add to `AUTH_EXCLUDE_PATHS` if public)
 - **Adjust scheduling** → Change `SCAN_INTERVAL_MINUTES` or cron in `app.py` lifespan
 - **Debug VL connectivity** → Check `vl.py` logs at `LOG_LEVEL=DEBUG`
@@ -147,3 +175,5 @@ All injected via Ansible inventory. Key ones:
 - **Outbox pattern**: finding + Kafka event written in same DB transaction; poller sends every 5s
 - **Russian logging output** in code — expected, not a bug
 - **Metrics cardinality**: HTTP path normalized (`/api/findings/{id}`) to avoid label explosion
+- **Labeled metrics need `.labels()` before observe/inc** — unlabeled call raises at runtime (e.g. `alert_analysis_duration_seconds["result"]`)
+- **Postgres init mounts**: each migration file mounted individually (`01_sre_agent.sql`, `02_alert_analyzer.sql`) — postgres entrypoint glob is non-recursive and later mounts override earlier ones at the same path

@@ -1,7 +1,9 @@
+# Development docker-compose with test containers
+# Hot reload via volume mounts, ephemeral test databases
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: auto-sre-postgres
+    container_name: auto-sre-postgres-dev
     hostname: postgres
     restart: unless-stopped
     environment:
@@ -9,26 +11,23 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-auto_sre}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
-      - /opt/data/auto-sre/postgres:/var/lib/postgresql/data
+      - postgres-dev-data:/var/lib/postgresql/data
       - ./files/sre-agent/migrations/01_init.sql:/docker-entrypoint-initdb.d/01_sre_agent.sql:ro
       - ./files/alert-analyzer/migrations/01_init.sql:/docker-entrypoint-initdb.d/02_alert_analyzer.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-auto_sre} -d ${POSTGRES_DB:-auto_sre}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    ports:
+      - "5432:5432"
     networks:
-      - auto-sre-net
+      - auto-sre-dev-net
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
-    container_name: auto-sre-kafka
+    container_name: auto-sre-kafka-dev
     hostname: kafka
     restart: unless-stopped
     environment:
@@ -44,28 +43,27 @@ services:
       - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
       - KAFKA_LOG_DIRS=/var/lib/kafka/data
       - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
-      - KAFKA_LOG_RETENTION_HOURS=168
+      - KAFKA_LOG_RETENTION_HOURS=24
       - KAFKA_LOG_SEGMENT_BYTES=1073741824
     volumes:
-      - /opt/data/auto-sre/kafka:/var/lib/kafka/data
+      - kafka-dev-data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      - "9092:9092"
     networks:
-      - auto-sre-net
+      - auto-sre-dev-net
 
   sre-agent:
-    build: ./sre-agent
-    image: auto-sre-agent:local
-    container_name: auto-sre-agent
+    build:
+      context: ./sre-agent
+      dockerfile: Dockerfile
+    image: auto-sre-agent:dev
+    container_name: auto-sre-agent-dev
     hostname: sre-agent
     restart: unless-stopped
     depends_on:
@@ -92,23 +90,20 @@ services:
       - KAFKA_CONSUMER_GROUP=auto-sre-worker
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
+      - ./files/sre-agent:/app:cached
       - /opt/data/auto-sre:/opt/data/auto-sre
     ports:
       - "8096:8096"
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
+    command: uvicorn app:app --host 0.0.0.0 --port 8096 --reload
     networks:
-      - auto-sre-net
+      - auto-sre-dev-net
 
   alert-analyzer:
     build:
       context: .
       dockerfile: alert-analyzer/Dockerfile
-    image: auto-sre-alert-analyzer:local
-    container_name: auto-sre-alert-analyzer
+    image: auto-sre-alert-analyzer:dev
+    container_name: auto-sre-alert-analyzer-dev
     hostname: alert-analyzer
     restart: unless-stopped
     depends_on:
@@ -129,16 +124,62 @@ services:
       - AUTH_ENABLED=${AUTH_ENABLED}
       - AUTH_USERNAME=${AUTH_USERNAME}
       - AUTH_PASSWORD=${AUTH_PASSWORD}
+    volumes:
+      - ./files/alert-analyzer:/app:cached
+      - ./files/common:/app/common:cached
     ports:
       - "8097:8097"
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
+    command: uvicorn app:app --host 0.0.0.0 --port 8097 --reload
     networks:
-      - auto-sre-net
+      - auto-sre-dev-net
+
+  # Optional: Victoria Logs for local testing (if not using external)
+  # victorialogs:
+  #   image: victoriametrics/victoria-logs:v1.9.0
+  #   container_name: auto-sre-vl-dev
+  #   command:
+  #     - --httpListenAddr=:9428
+  #     - --memory.allowedPercent=60
+  #     - --retentionPeriod=30d
+  #   ports:
+  #     - "9428:9428"
+  #   volumes:
+  #     - vl-dev-data:/victoria-logs-data
+  #   networks:
+  #     - auto-sre-dev-net
+
+  # Optional: LiteLLM for local testing (if not using external)
+  # litellm:
+  #   image: ghcr.io/berriai/litellm:main-stable
+  #   container_name: auto-sre-litellm-dev
+  #   command:
+  #     - --host=0.0.0.0
+  #     - --port=4000
+  #     - --model_list='[{"model_name": "gemma-4-12B-it-qat-q4_0-gguf", "litellm_params": {"model": "ollama/gemma-4-12B-it-qat-q4_0-gguf", "api_base": "http://ollama:11434"}}]'
+  #   ports:
+  #     - "4000:4000"
+  #   environment:
+  #     - OLLAMA_API_BASE=http://ollama:11434
+  #   networks:
+  #     - auto-sre-dev-net
+
+  # Optional: Ollama for local LLM
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: auto-sre-ollama-dev
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-dev-data:/root/.ollama
+  #   networks:
+  #     - auto-sre-dev-net
 
 networks:
-  auto-sre-net:
+  auto-sre-dev-net:
     driver: bridge
+
+volumes:
+  postgres-dev-data:
+  kafka-dev-data:
+  # vl-dev-data:
+  # ollama-dev-data:
