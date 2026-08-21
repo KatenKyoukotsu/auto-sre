@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto SRE — блог</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/animations.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/">Auto SRE</a>
+      <nav>
+        <a href="/">Стена аномалий</a>
+        <a href="/blog" class="active">Блог</a>
+      </nav>
+      <button id="trigger-blog" class="btn">Сгенерировать пост</button>
+    </div>
+  </header>
+
+  <main class="container narrow">
+    <h1>Мини-блог Auto SRE</h1>
+    <div id="blog-content"></div>
+  </main>
+
+  <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script type="module" src="/static/js/blog.js"></script>
+</body>
+</html>

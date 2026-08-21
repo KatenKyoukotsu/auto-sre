@@ -94,6 +94,9 @@ services:
       - KAFKA_TOPIC_SCAN_EVENTS=auto-sre.scan-events
       - KAFKA_CONSUMER_GROUP=auto-sre-worker
       - LOG_LEVEL=${LOG_LEVEL}
+      - AUTH_ENABLED=${AUTH_ENABLED}
+      - AUTH_USERNAME=${AUTH_USERNAME}
+      - AUTH_PASSWORD=${AUTH_PASSWORD}
     volumes:
       - /opt/data/auto-sre:/opt/data/auto-sre
     ports:

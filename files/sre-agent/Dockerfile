@@ -6,7 +6,6 @@ COPY sre-agent/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY sre-agent/*.py ./
-COPY sre-agent/templates/ ./templates/
 COPY frontend/ ./static/
 
 EXPOSE 8096

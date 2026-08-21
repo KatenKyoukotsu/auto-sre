@@ -21,18 +21,8 @@
     </div>
   </header>
 
-    <main class="container">
-    <section class="status">
-      <span class="status-dot"></span>
-      <div>
-        <strong>Состояние продакшена</strong>
-        <div class="status-meta">
-          Модель: {{ agent.llm.model }} ·
-          Последний скан: {{ agent.last_scan or "ещё не выполнялся" }}
-          {% if agent.last_error %}<div class="error-line">Ошибка скана: {{ agent.last_error }}</div>{% endif %}
-        </div>
-      </div>
-    </section>
+  <main class="container">
+    <section class="status" id="status"></section>
 
     <section class="fullscan">
       <h2>Полное сканирование</h2>
@@ -52,30 +42,11 @@
 
     <h1>Что не так в проде</h1>
 
-    {% if findings %}
-      {% for f in findings %}
-      <article class="card severity-{{ f.severity }}{% if f.acknowledged %} acknowledged{% endif %}">
-        <div class="card-head">
-          <span class="badge sev">{{ f.severity }}</span>
-          <h2>{{ f.title }}</h2>
-          <time>{{ f.created_at }}</time>
-        </div>
-        {% if f.service %}<div class="service">Сервис: <code>{{ f.service }}</code></div>{% endif %}
-        <p class="summary">{{ f.summary }}</p>
-        {% if f.possible_cause %}<p><strong>Вероятная причина:</strong> {{ f.possible_cause }}</p>{% endif %}
-        {% if f.recommended_action %}<p><strong>Рекомендуемое действие:</strong> {{ f.recommended_action }}</p>{% endif %}
-        {% if f.confidence is not none %}<div class="meta">Доверие модели: {{ "%.0f"|format(f.confidence * 100) }}%</div>{% endif %}
-        <div class="card-actions">
-          <button class="btn small ack" data-id="{{ f.id }}">Подтвердить</button>
-        </div>
-      </article>
-      {% endfor %}
-    {% else %}
-      <div class="empty">Аномалий не обнаружено. Прод в порядке (или ещё не сканировался).</div>
-    {% endif %}
+    <div id="findings"></div>
   </main>
 
+  <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
   <script type="module" src="/static/js/wall.js"></script>
 </body>
 </html>
-

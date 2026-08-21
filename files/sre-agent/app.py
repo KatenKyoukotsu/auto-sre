@@ -17,13 +17,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-
-import markdown
 
 from agent import Agent, full_scan_job, scan_job
 from llm import LlmClient
@@ -214,32 +211,18 @@ async def log_requests(request: Request, call_next):
 
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+
+FRONTEND_DIR = os.path.join(BASE_DIR, "static")
 
 
-def _markdown_filter(text: str) -> str:
-    if not text:
-        return ""
-    return markdown.markdown(text, extensions=["extra"])
+@app.get("/", include_in_schema=False)
+async def wall():
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"), headers={"Cache-Control": "no-cache"})
 
 
-templates.env.filters["markdown"] = _markdown_filter
-
-
-@app.get("/", response_class=HTMLResponse)
-async def wall(request: Request):
-    findings = await store.list_findings(limit=100)
-    return templates.TemplateResponse(request, "wall.html", {"findings": findings, "agent": agent})
-
-
-@app.get("/blog", response_class=HTMLResponse)
-async def blog_page(request: Request):
-    posts = await store.list_blog_posts(limit=30)
-    return templates.TemplateResponse(request, "blog.html", {
-        "posts": posts,
-        "blog_status": agent.blog_status,
-        "blog_error": agent.blog_error,
-    })
+@app.get("/blog", include_in_schema=False)
+async def blog_page():
+    return FileResponse(os.path.join(FRONTEND_DIR, "blog.html"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/findings")
