@@ -1,0 +1,107 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: auto-sre-postgres
+    hostname: postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-auto_sre}
+      - POSTGRES_USER=${POSTGRES_USER:-auto_sre}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - /opt/data/auto-sre/postgres:/var/lib/postgresql/data
+      - ./files/sre-agent/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-auto_sre} -d ${POSTGRES_DB:-auto_sre}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    networks:
+      - auto-sre-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: auto-sre-kafka
+    hostname: kafka
+    restart: unless-stopped
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_LOG_DIRS=/var/lib/kafka/data
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_LOG_RETENTION_HOURS=168
+      - KAFKA_LOG_SEGMENT_BYTES=1073741824
+    volumes:
+      - /opt/data/auto-sre/kafka:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    networks:
+      - auto-sre-net
+
+  sre-agent:
+    build: ./sre-agent
+    image: auto-sre-agent:local
+    container_name: auto-sre-agent
+    hostname: sre-agent
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      - VL_URL=${VL_URL}
+      - VL_USERNAME=${VL_USERNAME}
+      - VL_PASSWORD=${VL_PASSWORD}
+      - LITELLM_URL=${LITELLM_URL}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - LITELLM_MODEL=${LITELLM_MODEL}
+      - SCAN_INTERVAL_MINUTES=${SCAN_INTERVAL_MINUTES}
+      - BLOG_HOUR=${BLOG_HOUR}
+      - BLOG_MINUTE=${BLOG_MINUTE}
+      - TZ=${TZ}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-auto_sre}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-auto_sre}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC_FINDINGS=auto-sre.findings
+      - KAFKA_TOPIC_BLOG=auto-sre.blog
+      - KAFKA_TOPIC_SCAN_EVENTS=auto-sre.scan-events
+      - KAFKA_CONSUMER_GROUP=auto-sre-worker
+      - LOG_LEVEL=${LOG_LEVEL}
+    volumes:
+      - /opt/data/auto-sre:/opt/data/auto-sre
+    ports:
+      - "8096:8096"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    networks:
+      - auto-sre-net
+
+networks:
+  auto-sre-net:
+    driver: bridge

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto SRE — блог</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/">Auto SRE</a>
+      <nav>
+        <a href="/">Стена аномалий</a>
+        <a href="/blog" class="active">Блог</a>
+      </nav>
+      <button id="trigger-blog" class="btn">Сгенерировать пост</button>
+    </div>
+  </header>
+
+  <main class="container narrow">
+    <h1>Мини-блог Auto SRE</h1>
+
+    {% if blog_status == "generating" %}
+    <section class="ai-pending" id="ai-pending">
+      <div class="ai-pending-head">
+        <span class="ai-spinner"></span>
+        <strong>Auto SRE пишет ответ…</strong>
+      </div>
+      <div class="ai-pending-body">
+        <span class="ai-ghost">Собираю инциденты за сутки, ищу закономерности, формулирую дайджест…</span>
+        <div class="ai-dots"><span></span><span></span><span></span></div>
+      </div>
+      {% if blog_error %}<div class="error-line">Ошибка: {{ blog_error }}</div>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if posts %}
+      {% for p in posts %}
+      <article class="post" data-post>
+        <header>
+          <h2 class="post-title">{{ p.title }}</h2>
+          <time>{{ p.created_at }}</time>
+        </header>
+        <div class="post-body">{{ p.content | markdown | safe }}</div>
+      </article>
+      {% endfor %}
+    {% else %}
+      <div class="empty">Постов пока нет. Первый дайджест появится после сканa.</div>
+    {% endif %}
+  </main>
+
+  <script>
+    (function () {
+      var BLOG_STATUS = {{ blog_status | tojson }};
+
+      if (BLOG_STATUS === 'generating') {
+        (function poll() {
+          setTimeout(async function () {
+            try {
+              var r = await fetch('/api/blog/status');
+              var st = await r.json();
+              if (st.status !== 'generating') { location.reload(); return; }
+            } catch (e) {}
+            poll();
+          }, 1500);
+        })();
+      }
+
+      document.getElementById('trigger-blog').addEventListener('click', function () {
+        fetch('/api/trigger/blog', { method: 'POST' }).then(function () { location.reload(); });
+      });
+
+      // ---- печать ответа по буквам, как будто AI рисует текст ----
+      var posts = document.querySelectorAll('[data-post]');
+      if (!posts.length) return;
+
+      var caret = document.createElement('span');
+      caret.className = 'typing-caret';
+
+      function typeTitle(el, text, done) {
+        el.textContent = '';
+        var i = 0;
+        (function step() {
+          if (i >= text.length) { done(); return; }
+          el.textContent = text.slice(0, ++i);
+          el.appendChild(caret);
+          var ch = text[i - 1];
+          var d = 34 + Math.random() * 26;
+          if ('.,!?;:»…—'.indexOf(ch) !== -1) d += 120;
+          setTimeout(step, d);
+        })();
+      }
+
+      function collectTextNodes(root) {
+        var nodes = [];
+        var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        while (w.nextNode()) {
+          var n = w.currentNode;
+          if (n.textContent.replace(/\s/g, '').length) nodes.push(n);
+        }
+        return nodes;
+      }
+
+      function typeBody(root, done) {
+        var nodes = collectTextNodes(root);
+        var idx = 0, pos = 0;
+        (function step() {
+          if (idx >= nodes.length) {
+            caret.remove();
+            done();
+            return;
+          }
+          var node = nodes[idx];
+          var full = node.textContent;
+          node.textContent = full.slice(0, pos + 1);
+          node.parentNode.insertBefore(caret, node.nextSibling);
+          pos++;
+          var isBlockEnd = false;
+          if (pos >= full.length) {
+            idx++;
+            pos = 0;
+            var tag = node.parentNode ? node.parentNode.tagName : '';
+            isBlockEnd = ['P', 'LI', 'H1', 'H2', 'H3', 'H4', 'PRE', 'BLOCKQUOTE'].indexOf(tag) !== -1;
+          }
+          var d = 24 + Math.random() * 22;
+          var ch = node.textContent[pos - 1] || '';
+          if ('.!?…'.indexOf(ch) !== -1) d += 180;
+          if (isBlockEnd) d += 220;
+          setTimeout(step, d);
+        })();
+      }
+
+      function animatePost(post) {
+        var titleEl = post.querySelector('.post-title');
+        var body = post.querySelector('.post-body');
+        if (!body) return;
+        var fullHtml = body.innerHTML;
+        body.style.display = 'none';
+
+        var typer = document.createElement('div');
+        typer.className = 'post-type';
+        body.parentNode.insertBefore(typer, body);
+
+        var root = document.createElement('div');
+        root.className = 'post-body';
+        root.innerHTML = fullHtml;
+        typer.appendChild(root);
+
+        var titleText = titleEl ? titleEl.textContent.trim() : '';
+        if (titleEl) {
+          typeTitle(titleEl, titleText, function () {
+            typeBody(root, function () {
+              typer.remove();
+              body.style.display = '';
+              body.classList.add('fade-in');
+            });
+          });
+        } else {
+          typeBody(root, function () {
+            typer.remove();
+            body.style.display = '';
+            body.classList.add('fade-in');
+          });
+        }
+      }
+
+      animatePost(posts[0]);
+    })();
+  </script>
+</body>
+</html>
+

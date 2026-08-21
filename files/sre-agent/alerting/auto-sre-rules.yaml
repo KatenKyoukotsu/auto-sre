@@ -1,0 +1,257 @@
+# Auto SRE - Prometheus Alerting Rules
+# 
+# Apply with: kubectl apply -f alerting-rules.yaml
+# Or configure in Prometheus rule_files
+
+groups:
+- name: auto-sre.rules
+  interval: 30s
+  rules:
+  
+  # ============================================================
+  # SERVICE HEALTH
+  # ============================================================
+  - alert: AutoSREDown
+    expr: auto_sre_up == 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Auto SRE service is down"
+      description: "Auto SRE has been down for more than 1 minute"
+  
+  - alert: AutoSRELastScanFailed
+    expr: auto_sre_last_scan_error == 1
+    for: 0m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Auto SRE last scan failed"
+      description: "The last anomaly scan completed with an error"
+  
+  - alert: AutoSRELastScanStale
+    expr: time() - auto_sre_last_scan_timestamp > 1800
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Auto SRE scan is stale"
+      description: "No successful scan for more than 30 minutes (expected every {{ $labels.scan_interval_minutes }} minutes)"
+  
+  
+  # ============================================================
+  # VICTORIA LOGS CONNECTIVITY
+  # ============================================================
+  - alert: AutoSREVLCircuitBreakerOpen
+    expr: auto_sre_vl_circuit_breaker_state == 2
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Victoria Logs circuit breaker OPEN"
+      description: "VL circuit breaker has been open for 1 minute - VL is unreachable"
+  
+  - alert: AutoSREVLHighErrorRate
+    expr: |
+      rate(auto_sre_vl_query_total{result="error"}[5m]) 
+      / 
+      rate(auto_sre_vl_query_total[5m]) > 0.1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High Victoria Logs error rate"
+      description: "VL error rate > 10% over 5 minutes"
+  
+  - alert: AutoSREVLHighLatency
+    expr: |
+      histogram_quantile(0.95, 
+        rate(auto_sre_vl_query_duration_seconds_bucket[5m])
+      ) > 10
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Victoria Logs high latency"
+      description: "VL p95 latency > 10s over 5 minutes"
+  
+  
+  # ============================================================
+  # LLM CONNECTIVITY
+  # ============================================================
+  - alert: AutoSRELLMCircuitBreakerOpen
+    expr: auto_sre_llm_circuit_breaker_state == 2
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "LLM circuit breaker OPEN"
+      description: "LLM circuit breaker has been open for 1 minute - LLM is unreachable"
+  
+  - alert: AutoSRELLMHighErrorRate
+    expr: |
+      rate(auto_sre_llm_request_total{result="error"}[5m]) 
+      / 
+      rate(auto_sre_llm_request_total[5m]) > 0.1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High LLM error rate"
+      description: "LLM error rate > 10% over 5 minutes"
+  
+  - alert: AutoSRELLMHighLatency
+    expr: |
+      histogram_quantile(0.95, 
+        rate(auto_sre_llm_request_duration_seconds_bucket[5m])
+      ) > 60
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "LLM high latency"
+      description: "LLM p95 latency > 60s over 5 minutes"
+  
+  
+  # ============================================================
+  # KAFKA
+  # ============================================================
+  - alert: AutoSREKafkaProducerHighErrorRate
+    expr: |
+      rate(auto_sre_kafka_producer_send_total{result="error"}[5m]) 
+      / 
+      rate(auto_sre_kafka_producer_send_total[5m]) > 0.05
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Kafka producer high error rate"
+      description: "Kafka producer error rate > 5% over 5 minutes"
+  
+  - alert: AutoSREKafkaConsumerHighErrorRate
+    expr: |
+      rate(auto_sre_kafka_consumer_process_total{result="error"}[5m]) 
+      / 
+      rate(auto_sre_kafka_consumer_process_total[5m]) > 0.1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Kafka consumer high error rate"
+      description: "Kafka consumer error rate > 10% over 5 minutes"
+  
+  - alert: AutoSREKafkaConsumerLagHigh
+    expr: auto_sre_kafka_consumer_lag > 1000
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Kafka consumer lag is high"
+      description: "Consumer lag > 1000 messages for 10 minutes on {{ $labels.topic }} partition {{ $labels.partition }}"
+  
+  - alert: AutoSREKafkaOutboxBacklog
+    expr: auto_sre_kafka_outbox_pending > 100
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Kafka outbox backlog growing"
+      description: "{{ $value }} events pending in outbox for 5 minutes"
+  
+  
+  # ============================================================
+  # DATABASE
+  # ============================================================
+  - alert: AutoSREDBPoolExhausted
+    expr: |
+      auto_sre_db_pool_checked_out / auto_sre_db_pool_size > 0.9
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Database connection pool near exhaustion"
+      description: "DB pool usage > 90% ({{ $value | humanizePercentage }} used)"
+  
+  - alert: AutoSREDBHighLatency
+    expr: |
+      histogram_quantile(0.95, 
+        rate(auto_sre_db_query_duration_seconds_bucket[5m])
+      ) > 5
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Database high latency"
+      description: "DB p95 latency > 5s over 5 minutes"
+  
+  
+  # ============================================================
+  # FINDINGS / ANOMALIES
+  # ============================================================
+  - alert: AutoSRECriticalFindingsSpike
+    expr: |
+      increase(auto_sre_findings_created_total{severity="critical"}[1h]) > 10
+    for: 0m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Spike in critical findings"
+      description: "{{ $value }} critical findings created in the last hour"
+  
+  - alert: AutoSREHighSeverityFindingsStale
+    expr: |
+      auto_sre_finding_age_seconds{severity=~"critical|high"} > 3600
+    for: 0m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High severity findings not acknowledged"
+      description: "Finding {{ $labels.finding_id }} ({{ $labels.service }}) is {{ $labels.severity }} and unacknowledged for > 1 hour"
+  
+  - alert: AutoSREManyUnackedFindings
+    expr: |
+      sum(auto_sre_findings_total{acknowledged="false"}) > 50
+    for: 30m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Many unacknowledged findings"
+      description: "{{ $value }} findings unacknowledged for 30 minutes"
+  
+  
+  # ============================================================
+  # HTTP / API
+  # ============================================================
+  - alert: AutoSREHighHTTPErrorRate
+    expr: |
+      sum(rate(auto_sre_http_requests_total{status=~"5.."}[5m])) 
+      / 
+      sum(rate(auto_sre_http_requests_total[5m])) > 0.05
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High HTTP 5xx error rate"
+      description: "HTTP 5xx rate > 5% over 5 minutes"
+  
+  - alert: AutoSREAuthFailuresSpike
+    expr: |
+      rate(auto_sre_http_auth_failures_total[5m]) > 10
+    for: 1m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Basic Auth failures spike"
+      description: "More than 10 auth failures per second - possible brute force"
+  
+  - alert: AutoSREHighHTTPLatency
+    expr: |
+      histogram_quantile(0.95, 
+        rate(auto_sre_http_request_duration_seconds_bucket[5m])
+      ) > 2
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High HTTP latency"
+      description: "HTTP p95 latency > 2s over 5 minutes"

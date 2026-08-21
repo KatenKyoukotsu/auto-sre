@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto SRE — стена аномалий</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/">Auto SRE</a>
+      <nav>
+        <a href="/" class="active">Стена аномалий</a>
+        <a href="/blog">Блог</a>
+      </nav>
+      <button id="trigger-scan" class="btn">Запустить скан</button>
+    </div>
+  </header>
+
+    <main class="container">
+    <section class="status">
+      <span class="status-dot"></span>
+      <div>
+        <strong>Состояние продакшена</strong>
+        <div class="status-meta">
+          Модель: {{ agent.llm.model }} ·
+          Последний скан: {{ agent.last_scan or "ещё не выполнялся" }}
+          {% if agent.last_error %}<div class="error-line">Ошибка скана: {{ agent.last_error }}</div>{% endif %}
+        </div>
+      </div>
+    </section>
+
+    <section class="fullscan">
+      <h2>Полное сканирование</h2>
+      <p class="hint">Перебирает все потоки логов за выбранный диапазон (по умолчанию — последние 24 часа) без ограничения по числу контейнеров.</p>
+      <div class="fullscan-controls">
+        <label>С: <input type="datetime-local" id="fs-start"></label>
+        <label>По: <input type="datetime-local" id="fs-end"></label>
+        <span class="presets">
+          <button class="btn small preset" data-hours="1">1ч</button>
+          <button class="btn small preset" data-hours="6">6ч</button>
+          <button class="btn small preset" data-hours="24">24ч</button>
+        </span>
+        <button id="trigger-full-scan" class="btn">Запустить полный скан</button>
+        <span id="fs-status" class="fs-status"></span>
+      </div>
+    </section>
+
+    <h1>Что не так в проде</h1>
+
+    {% if findings %}
+      {% for f in findings %}
+      <article class="card severity-{{ f.severity }}{% if f.acknowledged %} acknowledged{% endif %}">
+        <div class="card-head">
+          <span class="badge sev">{{ f.severity }}</span>
+          <h2>{{ f.title }}</h2>
+          <time>{{ f.created_at }}</time>
+        </div>
+        {% if f.service %}<div class="service">Сервис: <code>{{ f.service }}</code></div>{% endif %}
+        <p class="summary">{{ f.summary }}</p>
+        {% if f.possible_cause %}<p><strong>Вероятная причина:</strong> {{ f.possible_cause }}</p>{% endif %}
+        {% if f.recommended_action %}<p><strong>Рекомендуемое действие:</strong> {{ f.recommended_action }}</p>{% endif %}
+        {% if f.confidence is not none %}<div class="meta">Доверие модели: {{ "%.0f"|format(f.confidence * 100) }}%</div>{% endif %}
+        <div class="card-actions">
+          <button class="btn small ack" data-id="{{ f.id }}">Подтвердить</button>
+        </div>
+      </article>
+      {% endfor %}
+    {% else %}
+      <div class="empty">Аномалий не обнаружено. Прод в порядке (или ещё не сканировался).</div>
+    {% endif %}
+  </main>
+
+  <script>
+    const fsStart = document.getElementById('fs-start');
+    const fsEnd = document.getElementById('fs-end');
+    const fsStatus = document.getElementById('fs-status');
+
+    function toLocalInput(dt) {
+      const pad = n => String(n).padStart(2, '0');
+      return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) +
+        'T' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
+    }
+    function setPreset(hours) {
+      const end = new Date();
+      const start = new Date(end.getTime() - hours * 3600 * 1000);
+      fsStart.value = toLocalInput(start);
+      fsEnd.value = toLocalInput(end);
+    }
+    function toIso(value) {
+      return value ? new Date(value).toISOString().replace(/\.\d+Z$/, 'Z') : null;
+    }
+
+    setPreset(24);
+    document.querySelectorAll('.preset').forEach(btn => {
+      btn.addEventListener('click', () => setPreset(parseInt(btn.dataset.hours, 10)));
+    });
+
+    document.getElementById('trigger-scan').addEventListener('click', async () => {
+      await fetch('/api/trigger/scan', { method: 'POST' });
+      location.reload();
+    });
+
+    document.getElementById('trigger-full-scan').addEventListener('click', async () => {
+      const start = toIso(fsStart.value);
+      const end = toIso(fsEnd.value);
+      if (!start || !end || start >= end) {
+        fsStatus.textContent = 'Укажите корректный диапазон времени.';
+        fsStatus.classList.add('error');
+        return;
+      }
+      fsStatus.textContent = 'Запущено...';
+      fsStatus.classList.remove('error');
+      const resp = await fetch('/api/trigger/full-scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start, end }),
+      });
+      const data = await resp.json();
+      fsStatus.textContent = data.message || (resp.ok ? 'Запущено' : 'Ошибка');
+      if (!resp.ok) fsStatus.classList.add('error');
+    });
+
+    document.querySelectorAll('.ack').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await fetch('/api/findings/' + btn.dataset.id + '/ack', { method: 'POST' });
+        btn.closest('article').classList.add('acknowledged');
+        btn.disabled = true;
+      });
+    });
+  </script>
+</body>
+</html>
+

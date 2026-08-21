@@ -1,0 +1,55 @@
+---
+- name: SET base dirs
+  set_fact:
+    auto_sre_dir: "/opt/docker/auto-sre"
+    auto_sre_data_dir: "/opt/data/auto-sre"
+
+- name: Create data dir
+  file:
+    path: "{{ auto_sre_data_dir }}"
+    state: directory
+    mode: 0755
+
+- name: Create app dir
+  file:
+    path: "{{ auto_sre_dir }}"
+    state: directory
+    mode: 0755
+
+- name: Copy MCP server sources
+  copy:
+    src: "files/mcp-vl/"
+    dest: "{{ auto_sre_dir }}/mcp-vl/"
+    mode: preserve
+
+- name: Copy SRE agent sources
+  copy:
+    src: "files/sre-agent/"
+    dest: "{{ auto_sre_dir }}/sre-agent/"
+    mode: preserve
+
+- name: Generate .env
+  template:
+    src: "env.j2"
+    dest: "{{ auto_sre_dir }}/.env"
+    mode: 0600
+
+- name: Generate docker-compose.yml
+  template:
+    src: "docker-compose.yml.j2"
+    dest: "{{ auto_sre_dir }}/docker-compose.yml"
+    mode: 0644
+
+- name: Docker compose down (cleanup)
+  shell: docker compose down --remove-orphans
+  args:
+    chdir: "{{ auto_sre_dir }}"
+  become: true
+  ignore_errors: true
+
+- name: Docker compose up --build
+  shell: docker compose up -d --build
+  args:
+    chdir: "{{ auto_sre_dir }}"
+  become: true
+
