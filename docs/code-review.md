@@ -23,35 +23,24 @@ Two main services:
 
 ## Architecture Overview
 
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ Victoria Logs   │────▶│   sre-agent      │────▶│    Kafka        │
-│ (direct HTTP)   │     │ (scanner + API)  │     │ (outbox events) │
-└─────────────────┘     └────────┬─────────┘     └────────┬────────┘
-                                 │                       │
-                                 ▼                       ▼
-                        ┌──────────────────┐     ┌──────────────────┐
-                        │  PostgreSQL      │     │ Kafka Consumer   │
-                        │ (findings, blog, │     │ (LLM analysis)   │
-                        │  outbox)         │     └────────┬─────────┘
-                        └──────────────────┘              │
-                                                          ▼
-                                                 ┌──────────────────┐
-                                                 │  PostgreSQL      │
-                                                 │ (enriched        │
-                                                 │  findings)       │
-                                                 └──────────────────┘
+```mermaid
+flowchart TB
+    subgraph logflow ["Log anomaly detection (sre-agent)"]
+        direction TB
+        VL["Victoria Logs<br/>(direct HTTP)"] --> SA["sre-agent<br/>(scanner + API)"]
+        SA --> PG[("PostgreSQL<br/>findings · blog · outbox")]
+        SA --> K["Kafka<br/>(outbox events)"]
+        K --> KC["Kafka Consumer<br/>(LLM analysis)"]
+        KC --> PG2[("PostgreSQL<br/>enriched findings")]
+    end
 
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ Alertmanager    │────▶│ alert-analyzer   │────▶│    Kafka        │
-│ (webhook)       │     │ (webhook + LLM)  │     │ (alert events)  │
-└─────────────────┘     └────────┬─────────┘     └────────┬────────┘
-                                 │                       │
-                                 ▼                       ▼
-                        ┌──────────────────┐     ┌──────────────────┐
-                        │  PostgreSQL      │     │ Kafka Consumer   │
-                        │ (alert_analysis) │     │ (future work)    │
-                        └──────────────────┘     └──────────────────┘
+    subgraph alertflow ["Alert analysis (alert-analyzer)"]
+        direction TB
+        AM["Alertmanager<br/>(webhook)"] --> AA["alert-analyzer<br/>(webhook + LLM)"]
+        AA --> APG[("PostgreSQL<br/>alert_analysis")]
+        AA --> AK["Kafka<br/>(alert events)"]
+        AK --> AKC["Kafka Consumer<br/>(future work)"]
+    end
 ```
 
 ---

@@ -10,58 +10,44 @@ Auto SRE is a dual-purpose observability platform:
 
 ## Component Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           AUTO SRE PLATFORM                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌──────────────┐    ┌──────────────────────────────────────────────────┐  │
-│  │ Victoria Logs │───▶│                  sre-agent                       │  │
-│  │  (direct     │    │  ┌─────────┐ ┌─────────┐ ┌─────────┐            │  │
-│  │   HTTP)      │    │  │ Scanner │ │  REST   │ │  Blog   │            │  │
-│  └──────────────┘    │  │ (APSched)│ │  API    │ │ Generator│            │  │
-│                      │  └────┬────┘ └────┬────┘ └────┬────┘            │  │
-│                       │       │          │          │                   │  │
-│                       │       ▼          ▼          ▼                   │  │
-│                       │  ┌─────────────────────────────────────────┐   │  │
-│                       │  │           PostgreSQL                     │   │  │
-│                       │  │  findings │ blog_posts │ outbox_events  │   │  │
-│                       │  └─────────────────────────────────────────┘   │  │
-│                       │       │                    │                   │  │
-│                       ▼       ▼                    ▼                   │  │
-│                ┌──────────────┐         ┌────────────────────┐        │  │
-│                │    Kafka     │◀────────│  Outbox Poller     │        │  │
-│                │  (3 topics)  │         │  (5s interval)     │        │  │
-│                └──────┬───────┘         └────────────────────┘        │  │
-│                       │                                          │      │  │
-│                       ▼                                          │      │  │
-│                ┌──────────────────┐                               │      │  │
-│                │ Kafka Consumer   │                               │      │  │
-│                │ (LLM Analysis)   │                               │      │  │
-│                └────────┬─────────┘                               │      │  │
-│                         │                                         │      │  │
-│                         ▼                                         │      │  │
-│                ┌──────────────────┐                               │      │  │
-│                │  PostgreSQL      │                               │      │  │
-│                │ (enriched        │                               │      │  │
-│                │  findings)       │                               │      │  │
-│                └──────────────────┘                               │      │  │
-│                                                                     │  │
-│  ┌─────────────────────────────────────────────────────────────┐  │  │
-│  │                      alert-analyzer                           │  │
-│  │  ┌──────────┐  ┌─────────────┐  ┌─────────┐  ┌───────────┐  │  │
-│  │  │ Webhook  │─▶│ AlertBatcher│─▶│ LLM     │─▶│ PostgreSQL │  │  │
-│  │  │ Receiver │  │ (time+size) │  │ Analysis│  │ alert_analy│  │  │
-│  │  └──────────┘  └─────────────┘  └─────────┘  │   sis      │  │  │
-│  │        │                │                     └────────────┘  │  │
-│  │        │                ▼                                         │  │
-│  │        │         ┌────────────┐                                  │  │
-│  │        └────────▶│   Kafka    │                                  │  │
-│  │                  │ (alerts)   │                                  │  │
-│  │                  └────────────┘                                  │  │
-│  └─────────────────────────────────────────────────────────────────┘  │
-│                                                                       │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph platform ["AUTO SRE PLATFORM"]
+        direction TB
+
+        VL[("Victoria Logs<br/>direct HTTP")]
+
+        subgraph sreagent ["sre-agent"]
+            direction LR
+            SCANNER["Scanner<br/>(APScheduler)"]
+            REST["REST API"]
+            BLOGGEN["Blog Generator"]
+        end
+
+        PG[("PostgreSQL<br/>findings · blog_posts · outbox_events")]
+        OUTBOX["Outbox Poller<br/>(5s interval)"]
+        KAFKA["Kafka<br/>(3 topics)"]
+        CONSUMER["Kafka Consumer<br/>(LLM analysis)"]
+
+        VL --> SCANNER
+        SCANNER --> PG
+        REST --> PG
+        BLOGGEN --> PG
+        PG --> OUTBOX
+        OUTBOX --> KAFKA
+        KAFKA --> CONSUMER
+        CONSUMER --> PG
+
+        subgraph alertanalyzer ["alert-analyzer"]
+            direction LR
+            WH["Webhook Receiver"] --> BATCHER["AlertBatcher<br/>(time + size)"]
+            BATCHER --> LLMA["LLM analysis"]
+            LLMA --> APG[("PostgreSQL<br/>alert_analysis")]
+        end
+
+        WH -.-> ALERTS["Kafka<br/>(alerts)"]
+        BATCHER -.-> ALERTS
+    end
 ```
 
 ---
@@ -70,20 +56,18 @@ Auto SRE is a dual-purpose observability platform:
 
 ### 1. Log Anomaly Detection (sre-agent)
 
-```
-Every SCAN_INTERVAL_MINUTES (default 15min):
-┌─────────────────────────────────────────────────────────────┐
-│ 1. Get active streams from VL (last 15min)                  │
-│ 2. For each stream (max 8):                                 │
-│    a. Query error count history (6h / 15min windows)        │
-│    b. Compute baseline (mean/std)                           │
-│    c. Check current window vs baseline                      │
-│    d. If spike: fetch samples, send to LLM                  │
-│ 3. Deduplicate by service (60min window)                    │
-│ 4. Store finding + outbox event (single transaction)        │
-│ 5. Outbox poller → Kafka (findings topic)                   │
-│ 6. Consumer picks up → LLM analysis → update finding        │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    T["Every SCAN_INTERVAL_MINUTES (default 15 min)"]
+    T --> A["1. Get active streams from VL (last 15 min)"]
+    A --> B["2. For each stream (max 8):<br/>a. query error count history (6h / 15 min windows)<br/>b. compute baseline (mean / std)<br/>c. check current window vs baseline"]
+    B --> C{"d. spike?"}
+    C -- yes --> D["fetch samples, send to LLM"]
+    C -- no --> E
+    D --> E["3. Deduplicate by service (60 min window)"]
+    E --> F["4. Store finding + outbox event (single transaction)"]
+    F --> G["5. Outbox poller → Kafka (findings topic)"]
+    G --> H["6. Consumer picks up → LLM analysis → update finding"]
 ```
 
 **Spike Detection Formula**:
@@ -94,31 +78,27 @@ is_spike = current > threshold AND current >= 20
 
 ### 2. Blog Generation (sre-agent)
 
-```
-Daily at 07:30 (Europe/Moscow):
-┌─────────────────────────────────────────────────────────────┐
-│ 1. Fetch findings from last 24h                             │
-│ 2. Build digest (count, summaries)                          │
-│ 3. Send to LLM with blog prompt                             │
-│ 4. Store blog post in PostgreSQL                            │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    T["Daily at 07:30 (Europe/Moscow)"]
+    T --> A["1. Fetch findings from last 24h"]
+    A --> B["2. Build digest (count, summaries)"]
+    B --> C["3. Send to LLM with blog prompt"]
+    C --> D["4. Store blog post in PostgreSQL"]
 ```
 
 ### 3. Alert Analysis (alert-analyzer)
 
-```
-Alertmanager webhook → /webhook:
-┌─────────────────────────────────────────────────────────────┐
-│ 1. Validate Basic Auth (optional)                           │
-│ 2. Parse AlertmanagerPayload (Pydantic)                     │
-│ 3. For each alert:                                          │
-│    a. Deduplicate by fingerprint (1h window)                │
-│    b. Group by (alertname, severity, cluster, ns, service)  │
-│    c. Add to AlertBatcher (time window 5min, max 20)        │
-│ 4. When batch ready → LLM analysis                          │
-│ 5. Store alert_analysis per fingerprint                     │
-│ 6. Periodic flush (60s) for pending alerts                  │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    W["Alertmanager webhook → /webhook"]
+    W --> A["1. Validate Basic Auth (optional)"]
+    A --> B["2. Parse AlertmanagerPayload (Pydantic)"]
+    B --> C["3. For each alert:<br/>a. deduplicate by fingerprint (1h window)<br/>b. group by (alertname, severity, cluster, ns, service)<br/>c. add to AlertBatcher (time window 5 min, max 20)"]
+    C --> D{"4. Batch ready?"}
+    D -- yes --> E["LLM analysis"]
+    D -- "periodic flush (60s)" --> E
+    E --> F["5. Store alert_analysis per fingerprint"]
 ```
 
 ---
