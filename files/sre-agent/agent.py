@@ -377,7 +377,7 @@ class Agent:
                 ],
             }
             try:
-                post = await self.llm.write_blog_post(json.dumps(digest, ensure_ascii=False, indent=2))
+                post = await self.llm.write_blog_post(json.dumps(digest, ensure_ascii=False, indent=2, default=str))
             except LlmError as exc:
                 logger.error("Блог-пост не сгенерирован: %s", exc)
                 self.blog_error = str(exc)
