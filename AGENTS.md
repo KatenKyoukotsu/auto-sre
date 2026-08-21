@@ -111,6 +111,6 @@ alert-analyzer (:8097): `/webhook`, `/webhook/test`, `/api/analyses[/{id}]`, `/a
 - **Secrets come from Ansible inventory** (`victorialogs_password`, `auto_sre_postgres_password`, `auto_sre_auth_password`) — never hardcode.
 - **Labeled metrics need `.labels(...)` before inc/observe** — unlabeled call raises at runtime.
 - **HTTP path normalization in metrics middleware** (`/api/findings/{id}`, `/api/{endpoint}`) — keep it, prevents label explosion.
-- **VL unreachable locally** → scans hang through retry/backoff/circuit-breaker (minutes), UI and health stay fine; check `sre.vl` log lines.
+- **VL unreachable locally** → scans hang through retry/backoff/circuit-breaker (minutes), UI and health stay fine; check `sre.vl` log lines. Scan with dead VL sets `last_error = "Victoria Logs недоступен…"` and does NOT update `last_scan` — "0 аномалий" при недоступном VL не считается успехом. LLM availability in `/api/health` comes from a cached `/v1/models` probe (`llm.reachable`) + circuit breaker state, not from the configured model name.
 - **`npx playwright-cli eval` takes an expression, not statements** — `a; b` throws SyntaxError. Use `(() => { a; return b; })()`. Discarding eval output with `>/dev/null 2>&1` hides these failures — don't.
 - **No test suite, no lint/typecheck config** — verify via manual API calls, `/metrics`, and Playwright UI checks.
