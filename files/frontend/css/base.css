@@ -142,6 +142,7 @@ h1 { font-size: 22px; margin: 8px 0 20px; }
 .card.severity-high { border-left-color: var(--high); }
 .card.severity-medium { border-left-color: var(--medium); }
 .card.severity-low { border-left-color: var(--low); }
+.card { transition: opacity var(--dur-med) ease; }
 .card.acknowledged { opacity: .55; }
 
 .card-head {

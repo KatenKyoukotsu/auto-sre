@@ -198,10 +198,20 @@
 
 /* --- появление новых карточек (живой поллинг) --- */
 .card-enter {
-  animation: card-enter .45s var(--ease-out);
+  animation: card-enter .45s var(--ease-out) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
 }
 
 @keyframes card-enter {
   from { opacity: 0; transform: translateY(-8px); }
   to { opacity: 1; transform: none; }
+}
+
+/* --- уважение к reduced motion --- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
 }

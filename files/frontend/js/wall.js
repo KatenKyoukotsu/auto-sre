@@ -136,7 +136,10 @@ function appendFindings(findings, markNew) {
   }
 
   const anchor = findingsBox.firstChild;
-  for (const card of newCards) findingsBox.insertBefore(card, anchor);
+  newCards.forEach((card, i) => {
+    card.style.setProperty('--i', Math.min(i, 8));
+    findingsBox.insertBefore(card, anchor);
+  });
 }
 
 // ack через делегирование — карточки перерисовываются динамически

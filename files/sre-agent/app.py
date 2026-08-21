@@ -210,7 +210,16 @@ async def log_requests(request: Request, call_next):
 
 
 
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+class NoCacheStaticFiles(StaticFiles):
+    """Статика с обязательной ревалидацией: правки фронтенда видны без ручного сброса кэша."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", NoCacheStaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 
 FRONTEND_DIR = os.path.join(BASE_DIR, "static")
 

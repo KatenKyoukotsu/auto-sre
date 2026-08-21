@@ -45,16 +45,30 @@ function pollWhileGenerating(onDone) {
   }, 1500);
 }
 
-// ---- typewriter (пока проигрывается для последнего поста при каждой загрузке;
-// в фазе 5 ограничим «живыми» новыми постами) ----
+// ---- typewriter: только для постов, появившихся пока страница открыта ----
+
+const SEEN_KEY = 'auto-sre.seen-posts';
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+function getSeen() {
+  try { return new Set(JSON.parse(sessionStorage.getItem(SEEN_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+
+function markSeen(ids) {
+  const seen = getSeen();
+  ids.forEach(id => seen.add(id));
+  try { sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seen])); } catch {}
+}
 
 const caret = document.createElement('span');
 caret.className = 'typing-caret';
 
-function typeTitle(elm, text, done) {
+function typeTitle(elm, text, done, isCancelled) {
   elm.textContent = '';
   let i = 0;
   (function step() {
+    if (isCancelled && isCancelled()) return;
     if (i >= text.length) { done(); return; }
     elm.textContent = text.slice(0, ++i);
     elm.appendChild(caret);
@@ -73,13 +87,15 @@ function collectTextNodes(root) {
   return nodes;
 }
 
-function typeBody(root, done) {
-  const nodes = collectTextNodes(root);
+function typeBody(root, done, isCancelled) {
+  // оригинальный текст захватываем сразу: пошаговое усечение текста
+  // иначе на следующем шаге «полным» окажется уже обрезанный фрагмент
+  const nodes = collectTextNodes(root).map(n => ({ node: n, full: n.textContent }));
   let idx = 0, pos = 0;
   (function step() {
+    if (isCancelled && isCancelled()) return;
     if (idx >= nodes.length) { caret.remove(); done(); return; }
-    const node = nodes[idx];
-    const full = node.textContent;
+    const { node, full } = nodes[idx];
     node.textContent = full.slice(0, pos + 1);
     node.parentNode.insertBefore(caret, node.nextSibling);
     pos++;
@@ -91,7 +107,7 @@ function typeBody(root, done) {
       isBlockEnd = ['P', 'LI', 'H1', 'H2', 'H3', 'H4', 'PRE', 'BLOCKQUOTE'].includes(tag);
     }
     let d = 24 + Math.random() * 22;
-    const ch = node.textContent[pos - 1] || '';
+    const ch = full[pos - 1] || '';
     if ('.!?…'.indexOf(ch) !== -1) d += 180;
     if (isBlockEnd) d += 220;
     setTimeout(step, d);
@@ -108,17 +124,28 @@ function animatePost(post) {
   const typer = el('div', 'post-type');
   const root = el('div', 'post-body');
   root.innerHTML = fullHtml;
+  // тело скрыто, пока печатается заголовок — иначе читатель видит весь текст до схлопывания
+  root.style.visibility = 'hidden';
   typer.appendChild(root);
+  typer.title = 'Клик — показать пост сразу';
   body.parentNode.insertBefore(typer, body);
 
+  let state = 'typing'; // typing | done
   const finish = () => {
+    if (state === 'done') return;
+    state = 'done';
     typer.remove();
     body.style.display = '';
     body.classList.add('fade-in');
   };
-  const typeText = () => typeBody(root, finish);
+  typer.addEventListener('click', finish);
 
-  if (titleEl) typeTitle(titleEl, titleEl.textContent.trim(), typeText);
+  if (reducedMotion.matches) { finish(); return; }
+
+  const isCancelled = () => state === 'done';
+  const typeText = () => { root.style.visibility = ''; return typeBody(root, finish, isCancelled); };
+
+  if (titleEl) typeTitle(titleEl, titleEl.textContent.trim(), typeText, isCancelled);
   else typeText();
 }
 
@@ -182,6 +209,8 @@ function onGenerationDone(status) {
 
 // ---- загрузка ----
 
+let firstLoadDone = false;
+
 async function loadPosts() {
   const [status, posts] = await Promise.all([api.getBlogStatus(), api.getBlogPosts(30)]);
   contentBox.textContent = '';
@@ -198,7 +227,23 @@ async function loadPosts() {
     return;
   }
 
-  posts.forEach((p, i) => contentBox.appendChild(renderPost(p, i === 0)));
+  // typewriter — только для постов, появившихся пока страница открыта;
+  // при нескольких новых за раз печатаем только самый свежий, остальные въезжают
+  const seen = getSeen();
+  let typedOnce = false;
+  posts.forEach((p, i) => {
+    const liveNew = firstLoadDone && !seen.has(p.id);
+    const animate = liveNew && !typedOnce && !reducedMotion.matches;
+    if (animate) typedOnce = true;
+    contentBox.appendChild(renderPost(p, animate));
+    if (liveNew && !animate) {
+      const postEl = contentBox.lastChild;
+      postEl.classList.add('card-enter');
+      postEl.style.setProperty('--i', i);
+    }
+  });
+  markSeen(posts.map(p => p.id));
+  firstLoadDone = true;
 }
 
 renderSkeletons(2);
