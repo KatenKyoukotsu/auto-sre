@@ -1,0 +1,45 @@
+# Local "combat mode" override: VictoriaLogs + Ollama on host (macOS)
+# Usage: docker compose -f docker-compose.dev.yml -f docker-compose.local.yml up -d
+services:
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.52.0
+    container_name: auto-sre-vl-local
+    hostname: victorialogs
+    restart: unless-stopped
+    command:
+      - --httpListenAddr=:9428
+      - --memory.allowedPercent=40
+      - --retentionPeriod=7d
+    ports:
+      - "9428:9428"
+    volumes:
+      - vl-local-data:/victoria-logs-data
+    networks:
+      - auto-sre-dev-net
+
+  sre-agent:
+    depends_on:
+      victorialogs:
+        condition: service_started
+    environment:
+      - VL_URL=http://victorialogs:9428
+      - VL_USERNAME=
+      - VL_PASSWORD=
+      - LITELLM_URL=http://host.docker.internal:11434
+      - LITELLM_API_KEY=ollama
+      - LITELLM_MODEL=qwen2.5:3b-instruct
+      - LLM_MAX_TOKENS=2500
+
+  alert-analyzer:
+    environment:
+      - LITELLM_URL=http://host.docker.internal:11434
+      - LITELLM_API_KEY=ollama
+      - LITELLM_MODEL=qwen2.5:3b-instruct
+      - LLM_MAX_TOKENS=2500
+
+networks:
+  auto-sre-dev-net:
+    driver: bridge
+
+volumes:
+  vl-local-data:

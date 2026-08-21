@@ -40,6 +40,35 @@ FINDING_SCHEMA_HINT = (
     '"confidence" (число 0..1).'
 )
 
+# Жёсткая схема для response_format=json_schema: мелкие модели игнорируют
+# текстовые инструкции о формате, грамматический constraint — нет.
+FINDING_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+        "service": {"type": "string"},
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "possible_cause": {"type": "string"},
+        "recommended_action": {"type": "string"},
+        "confidence": {"type": "number"},
+    },
+    "required": ["severity", "title", "summary", "possible_cause", "recommended_action", "confidence"],
+}
+
+BLOG_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "content": {"type": "string"},
+    },
+    "required": ["title", "content"],
+}
+
+
+def _json_schema_format(name: str, schema: dict) -> dict:
+    return {"type": "json_schema", "json_schema": {"name": name, "schema": schema}}
+
 ANALYZE_SYSTEM_PROMPT = (
     "Ты — Auto SRE. Анализируешь логи прод-системы и находишь аномалии. "
     "Работаешь только с теми фактами, что есть в логах, не выдумывай. "
@@ -129,13 +158,13 @@ class LlmClient:
             return
         self._probe_at = time.time()
         try:
-            resp = await self.client.get(f"{self.base_url}/v1/models")
-            self._reachable = resp.status_code < 500
+            await self.client.models.list()
+            self._reachable = True
         except Exception as exc:
             logger.debug("LLM probe failed: %s", exc)
             self._reachable = False
 
-    async def _complete_with_retry(self, system: str, user: str) -> str:
+    async def _complete_with_retry(self, system: str, user: str, response_format: dict | None = None) -> str:
         if not self._circuit.can_proceed():
             raise LlmError("Circuit breaker OPEN - LLM unavailable")
 
@@ -144,15 +173,19 @@ class LlmClient:
             start_time = time.time()
             try:
                 logger.debug("LLM request: model=%s attempt=%d", self.model, attempt + 1)
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
+                kwargs = {
+                    "model": self.model,
+                    "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
-                    temperature=LLM_TEMPERATURE,
-                    max_tokens=LLM_MAX_TOKENS,
-                )
+                    "temperature": LLM_TEMPERATURE,
+                    "max_tokens": LLM_MAX_TOKENS,
+                }
+                if response_format:
+                    # json_schema держит структуру ответа даже на мелких моделях
+                    kwargs["response_format"] = response_format
+                response = await self.client.chat.completions.create(**kwargs)
                 content = response.choices[0].message.content or ""
                 self._circuit.record_success()
                 llm_request_duration_seconds.labels(operation="chat_completion", result="success").observe(time.time() - start_time)
@@ -192,16 +225,25 @@ class LlmClient:
             "last_error": self._circuit.last_error,
         }
 
-    async def _complete(self, system: str, user: str) -> str:
+    async def _complete(self, system: str, user: str, response_format: dict | None = None) -> str:
         logger.info("LLM request: model=%s system=%s", self.model, _trunc(system, 250))
         logger.info("LLM request: user=%s", _trunc(user, 1200))
-        return await self._complete_with_retry(system, user)
+        return await self._complete_with_retry(system, user, response_format=response_format)
 
     async def analyze_logs(self, context: str) -> dict:
         start_time = time.time()
         try:
-            text = await self._complete(ANALYZE_SYSTEM_PROMPT, context)
+            text = await self._complete(ANALYZE_SYSTEM_PROMPT, context, _json_schema_format("finding", FINDING_JSON_SCHEMA))
             data = extract_json(text)
+            conf = data.get("confidence")
+            if isinstance(conf, (int, float)) and conf > 1:
+                # часть моделей отвечает по шкале 0-100 вместо 0-1
+                data["confidence"] = round(conf / 100, 2)
+            if not data.get("summary"):
+                logger.warning(
+                    "LLM вернул нечитаемый JSON (%d символов, возможно обрезан по max_tokens): %s",
+                    len(text), _trunc(text, 300),
+                )
             confidence = data.get("confidence")
             if confidence is not None:
                 try:
@@ -215,7 +257,7 @@ class LlmClient:
     async def write_blog_post(self, digest_context: str) -> dict:
         start_time = time.time()
         try:
-            text = await self._complete(BLOG_SYSTEM_PROMPT, digest_context)
+            text = await self._complete(BLOG_SYSTEM_PROMPT, digest_context, _json_schema_format("blog_post", BLOG_JSON_SCHEMA))
             data = extract_json(text)
             if not data.get("title") or not data.get("content"):
                 data = {"title": "SRE-дайджест", "content": text}
@@ -229,11 +271,16 @@ def extract_json(text: str) -> dict:
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         return {}
+    raw = match.group(0)
     try:
-        data = json.loads(match.group(0))
-        return data if isinstance(data, dict) else {}
+        data = json.loads(raw)
     except json.JSONDecodeError:
-        return {}
+        # мелкие модели любят висячие запятые перед закрывающей скобкой
+        try:
+            data = json.loads(re.sub(r",\s*([}\]])", r"\1", raw))
+        except json.JSONDecodeError:
+            return {}
+    return data if isinstance(data, dict) else {}
 
 
 import asyncio
