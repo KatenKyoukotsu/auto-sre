@@ -12,3 +12,6 @@ __pycache__/
 # Agent configs and data
 .claude
 opencode.json
+# Гео-скрипты: локальные секреты и state
+scripts/geo/geo.env
+scripts/geo/.state/

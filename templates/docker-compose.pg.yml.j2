@@ -1,0 +1,131 @@
+# PostgreSQL-кластер гео (master + replica) с пулером pgbouncer.
+# Рендерится Ansible на каждый узел; роль узла — переменная auto_sre_pg_role.
+#
+# Сеть:
+#   postgres  :15432 — межсайтовая репликация и бэкенд pgbouncer
+#   pgbouncer-rw :6543 — ЗАПИСЬ, всегда смотрит на текущий PRIMARY (PG_RW_TARGET_HOST)
+#   pgbouncer-ro :6544 — чтение, смотрит на ЛОКАЛЬНЫЙ узел
+# Переключение ролей — только скриптами scripts/geo/geo-pg-{switchover,failover}.sh.
+
+name: auto-sre-pg
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pg-node
+    hostname: pg-node
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=5
+      - -c
+      - hot_standby=on
+      - -c
+      - wal_keep_size=1GB
+{% if auto_sre_pg_role == 'master' %}
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-auto_sre}
+      - POSTGRES_USER=${POSTGRES_USER:-auto_sre}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      # используются init-cluster.sh при первичной инициализации
+      - PG_REPLICATION_PASSWORD=${PG_REPLICATION_PASSWORD}
+      - PG_POOL_PASSWORD=${PG_POOL_PASSWORD}
+      # init-cluster.sh пишет сюда userlist.txt для pgbouncer (SCRAM-верификаторы)
+      - AUTH_OUTPUT_DIR=/auth-out
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./files/postgres/init-cluster.sh:/docker-entrypoint-initdb.d/10-init-cluster.sh:ro
+      - ./files/pgbouncer/auth:/auth-out
+{% else %}
+    environment:
+      # данные реплики заливаются pg_basebackup скриптом pg-replica-bootstrap.sh,
+      # entrypoint официального образа видит непустой PGDATA и не трогает его
+      - PGDATA=/var/lib/postgresql/data
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+{% endif %}
+    ports:
+      - "15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-auto_sre} -d ${POSTGRES_DB:-auto_sre}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: {% if auto_sre_pg_role == 'master' %}15s{% else %}30s{% endif %}
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  pgbouncer-rw:
+    build:
+      context: ./files/pgbouncer
+    image: auto-sre-pgbouncer:latest
+    container_name: pgbouncer-rw
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_started
+    environment:
+      - LISTEN_PORT=6543
+      - PG_TARGET_HOST=${PG_RW_TARGET_HOST}
+      # в проде — опубликованный межсайтовый порт узла; при желании переопределяется
+      - PG_TARGET_PORT=${PG_RW_TARGET_PORT:-15432}
+      - PG_DATABASE=${POSTGRES_DB:-auto_sre}
+      - PG_ADMIN_USER=${POSTGRES_USER:-auto_sre}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    ports:
+      - "6543:6543"
+    volumes:
+      - ./files/pgbouncer/auth:/etc/pgbouncer:ro
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=$$POSTGRES_PASSWORD psql -h localhost -p 6543 -U ${POSTGRES_USER:-auto_sre} -d ${POSTGRES_DB:-auto_sre} -tAc 'SELECT 1'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  pgbouncer-ro:
+    image: auto-sre-pgbouncer:latest
+    container_name: pgbouncer-ro
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_started
+    environment:
+      - LISTEN_PORT=6544
+      # чтение — всегда локальный узел, независимо от ролей
+      - PG_TARGET_HOST=pg-node
+      - PG_TARGET_PORT=5432
+      - PG_DATABASE=${POSTGRES_DB:-auto_sre}
+      - PG_ADMIN_USER=${POSTGRES_USER:-auto_sre}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    ports:
+      - "6544:6544"
+    volumes:
+      - ./files/pgbouncer/auth:/etc/pgbouncer:ro
+    healthcheck:
+      test: ["CMD-SHELL", "psql -h localhost -p 6544 -U ${POSTGRES_USER:-auto_sre} -d ${POSTGRES_DB:-auto_sre} -tAc 'SELECT 1'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+volumes:
+  pg-data:

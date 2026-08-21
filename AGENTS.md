@@ -111,6 +111,7 @@ alert-analyzer (:8097): `/webhook`, `/webhook/test`, `/api/analyses[/{id}]`, `/a
 - **New metric** → define in `metrics.py` first (both services have their own)
 - **Schema change** → update `store.py` models AND `migrations/01_init.sql` (fresh DBs are built from SQL, existing DBs from create_all — keep both in sync)
 - **Alert rules** → `files/sre-agent/alerting/auto-sre-rules.yaml`
+- **Geo-переключения** → `scripts/geo/` (`geo-status.sh`, `geo-pg-switchover.sh`, `geo-pg-failover.sh`, `pg-replica-bootstrap.sh`; конфиг `geo.env` из `geo.env.example`)
 
 ## Gotchas
 - **Prod compose passes `AUTH_*` only to alert-analyzer, not sre-agent** → in prod sre-agent gets empty password → `expected_auth=None` → Basic Auth silently disabled (app.py middleware skips when no password). Wire the vars in if auth is required.
@@ -123,3 +124,11 @@ alert-analyzer (:8097): `/webhook`, `/webhook/test`, `/api/analyses[/{id}]`, `/a
 - **VL unreachable locally** → scans hang through retry/backoff/circuit-breaker (minutes), UI and health stay fine; check `sre.vl` log lines. Scan with dead VL sets `last_error = "Victoria Logs недоступен…"` and does NOT update `last_scan` — "0 аномалий" при недоступном VL не считается успехом. LLM availability in `/api/health` comes from a cached `/v1/models` probe (`llm.reachable`) + circuit breaker state, not from the configured model name.
 - **`npx playwright-cli eval` takes an expression, not statements** — `a; b` throws SyntaxError. Use `(() => { a; return b; })()`. Discarding eval output with `>/dev/null 2>&1` hides these failures — don't.
 - ~~No test suite~~ Тесты есть: `./scripts/run-tests.sh` (см. Key Commands). Линт/тайпчек по-прежнему нет.
+
+## Георезерв (nsk p279i03mon01 / msk p279i43mon01)
+- **PostgreSQL: master + async-реплика** (`templates/docker-compose.pg.yml.j2`, проект `auto-sre-pg`): межсайтовый порт 15432, `pgbouncer-rw` :6543 → всегда текущий PRIMARY (`PG_RW_TARGET_HOST` в .env), `pgbouncer-ro` :6544 → локальный узел. Пулы в режиме transaction с `max_prepared_statements=300` — SQLAlchemy/asyncpg named statements совместимы.
+- **Kafka active-active**: каждая площадка живёт на своём брокере (`kafka:9092`), MM2 и переключение брокера НЕ используются — durable-состояние живёт в Postgres, топики не нужно зеркалить. При потере площадки её in-flight события теряются, это принято.
+- **Свитчовер** (`geo-pg-switchover.sh --to <site>`): стоп писателей обеих площадок → **стоп исходного postgres ДО промоута** (иначе фоновый WAL уводит реплику дальше точки форка таймлайна — «new timeline forked before current recovery point», реплика не следует за новым мастером) → слив WAL на цели (receive==replay стабильно между опросами) → promote → слот → демоут источника через helper-контейнер поверх тома `auto-sre-pg_pg-data` (exec на остановленном контейнере невозможен; uid postgres в alpine-образе = 70) → флип `PG_RW_TARGET_HOST` обеих площадок → старт бывшего мастера как реплики.
+- **Failover** (`geo-pg-failover.sh`) — при мёртвом мастере, без гарантий целостности; реинтеграция выжившего узла — `pg-replica-bootstrap.sh <host> --wipe`.
+- **userlist.txt для pgbouncer генерируется автоматически**: `init-cluster.sh` пишет SCRAM-верификаторы из pg_authid в смонтированный `./files/pgbouncer/auth` (`AUTH_OUTPUT_DIR=/auth-out`). При ре-инициализации кластера верификаторы пересоздаются с новой солью — захардкоженный юзерлист протухает («password authentication failed» через пул). Если прав на запись нет, скрипт печатает готовую команду ручной генерации.
+- **primary_conninfo в postgresql.auto.conf требует ВНЕШНИХ кавычек вокруг всего значения** (`primary_conninfo = 'user=... password=...'`) — без них postgres падает при старте с «syntax error near token =».
