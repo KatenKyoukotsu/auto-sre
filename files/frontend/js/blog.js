@@ -36,19 +36,23 @@ function renderPending(error) {
 }
 
 function pollWhileGenerating(onDone) {
+  if (pollActive) return;
+  pollActive = true;
   setTimeout(async () => {
     try {
       const st = await api.getBlogStatus();
-      if (st.status !== 'generating') { onDone(st); return; }
+      if (st.status !== 'generating') { pollActive = false; onDone(st); return; }
     } catch (e) {}
+    pollActive = false;
     pollWhileGenerating(onDone);
   }, 1500);
 }
 
-// ---- typewriter: только для постов, появившихся пока страница открыта ----
+// ---- появление нового поста: блоки выезжают по очереди ----
 
 const SEEN_KEY = 'auto-sre.seen-posts';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let pollActive = false;
 
 function getSeen() {
   try { return new Set(JSON.parse(sessionStorage.getItem(SEEN_KEY) || '[]')); }
@@ -61,92 +65,14 @@ function markSeen(ids) {
   try { sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seen])); } catch {}
 }
 
-const caret = document.createElement('span');
-caret.className = 'typing-caret';
-
-function typeTitle(elm, text, done, isCancelled) {
-  elm.textContent = '';
-  let i = 0;
-  (function step() {
-    if (isCancelled && isCancelled()) return;
-    if (i >= text.length) { done(); return; }
-    elm.textContent = text.slice(0, ++i);
-    elm.appendChild(caret);
-    let d = 34 + Math.random() * 26;
-    if ('.,!?;:»…—'.indexOf(text[i - 1]) !== -1) d += 120;
-    setTimeout(step, d);
-  })();
-}
-
-function collectTextNodes(root) {
-  const nodes = [];
-  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  while (w.nextNode()) {
-    if (w.currentNode.textContent.replace(/\s/g, '').length) nodes.push(w.currentNode);
-  }
-  return nodes;
-}
-
-function typeBody(root, done, isCancelled) {
-  // оригинальный текст захватываем сразу: пошаговое усечение текста
-  // иначе на следующем шаге «полным» окажется уже обрезанный фрагмент
-  const nodes = collectTextNodes(root).map(n => ({ node: n, full: n.textContent }));
-  let idx = 0, pos = 0;
-  (function step() {
-    if (isCancelled && isCancelled()) return;
-    if (idx >= nodes.length) { caret.remove(); done(); return; }
-    const { node, full } = nodes[idx];
-    node.textContent = full.slice(0, pos + 1);
-    node.parentNode.insertBefore(caret, node.nextSibling);
-    pos++;
-    let isBlockEnd = false;
-    if (pos >= full.length) {
-      idx++;
-      pos = 0;
-      const tag = node.parentNode ? node.parentNode.tagName : '';
-      isBlockEnd = ['P', 'LI', 'H1', 'H2', 'H3', 'H4', 'PRE', 'BLOCKQUOTE'].includes(tag);
-    }
-    let d = 24 + Math.random() * 22;
-    const ch = full[pos - 1] || '';
-    if ('.!?…'.indexOf(ch) !== -1) d += 180;
-    if (isBlockEnd) d += 220;
-    setTimeout(step, d);
-  })();
-}
-
-function animatePost(post) {
-  const titleEl = post.querySelector('.post-title');
-  const body = post.querySelector('.post-body');
-  if (!body) return;
-  const fullHtml = body.innerHTML;
-  body.style.display = 'none';
-
-  const typer = el('div', 'post-type');
-  const root = el('div', 'post-body');
-  root.innerHTML = fullHtml;
-  // тело скрыто, пока печатается заголовок — иначе читатель видит весь текст до схлопывания
-  root.style.visibility = 'hidden';
-  typer.appendChild(root);
-  typer.title = 'Клик — показать пост сразу';
-  body.parentNode.insertBefore(typer, body);
-
-  let state = 'typing'; // typing | done
-  const finish = () => {
-    if (state === 'done') return;
-    state = 'done';
-    typer.remove();
-    body.style.display = '';
-    body.classList.add('fade-in');
-  };
-  typer.addEventListener('click', finish);
-
-  if (reducedMotion.matches) { finish(); return; }
-
-  const isCancelled = () => state === 'done';
-  const typeText = () => { root.style.visibility = ''; return typeBody(root, finish, isCancelled); };
-
-  if (titleEl) typeTitle(titleEl, titleEl.textContent.trim(), typeText, isCancelled);
-  else typeText();
+function revealPost(post) {
+  // один экземпляр текста в DOM; блоки проявляются каскадом, вся анимация ~2с
+  const header = post.querySelector('header');
+  const blocks = post.querySelectorAll('.post-body > *');
+  [header, ...blocks].forEach((node, i) => {
+    node.style.setProperty('--d', Math.min(i * 90, 2400) + 'ms');
+  });
+  post.classList.add('reveal');
 }
 
 // ---- рендер постов ----
@@ -163,7 +89,7 @@ function renderPost(p, animate) {
   renderMarkdown(body, p.content);
   post.appendChild(body);
 
-  if (animate) animatePost(post);
+  if (animate) revealPost(post);
   return post;
 }
 
