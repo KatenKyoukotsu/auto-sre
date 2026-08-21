@@ -148,11 +148,16 @@ def extract_json(text: str) -> dict:
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         return {}
+    raw = match.group(0)
     try:
-        data = json.loads(match.group(0))
-        return data if isinstance(data, dict) else {}
+        data = json.loads(raw)
     except json.JSONDecodeError:
-        return {}
+        # мелкие модели любят висячие запятые перед закрывающей скобкой
+        try:
+            data = json.loads(re.sub(r",\s*([}\]])", r"\1", raw))
+        except json.JSONDecodeError:
+            return {}
+    return data if isinstance(data, dict) else {}
 
 
 import asyncio

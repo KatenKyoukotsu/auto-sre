@@ -159,14 +159,11 @@ class AlertAnalyzer:
         # Simple approach: check if analysis exists for this fingerprint recently
         since = datetime.now(timezone.utc) - timedelta(seconds=ALERT_DEDUP_WINDOW)
         analyses = await self.store.list_analyses(limit=100, since=since)
-        for a in analyses:
-            try:
-                correlated = json.loads(a.get("correlated_group", "[]"))
-                if fingerprint in correlated:
-                    return True
-            except json.JSONDecodeError:
-                continue
-        return False
+        # store._to_dict уже распарсил JSON-колонки в структуры
+        return any(
+            isinstance(a.get("correlated_group"), list) and fingerprint in a["correlated_group"]
+            for a in analyses
+        )
 
     async def _analyze_batch(self, alerts: list[Alert]) -> None:
         if not alerts:

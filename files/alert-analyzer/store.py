@@ -155,4 +155,13 @@ class AlertStore:
 
     @staticmethod
     def _to_dict(row) -> dict:
-        return {c.name: getattr(row, c.name) for c in row.__table__.columns}
+        data = {c.name: getattr(row, c.name) for c in row.__table__.columns}
+        # JSON-колонки хранятся как TEXT — наружу отдаём структуры, а не строки
+        for key in ("correlated_group", "suggested_actions", "raw_alerts"):
+            value = data.get(key)
+            if isinstance(value, str):
+                try:
+                    data[key] = json.loads(value)
+                except json.JSONDecodeError:
+                    pass
+        return data

@@ -26,6 +26,15 @@ docker compose -f docker-compose.dev.yml logs -f sre-agent
 ```
 Dev compose mounts `files/sre-agent` and `files/alert-analyzer` at `/app` with `uvicorn --reload`, plus `files/frontend` at `/app/static` — Python edits apply without rebuild; requirements.txt changes need `--build`.
 
+### Tests
+```bash
+./scripts/run-tests.sh   # юнит + интеграционные, всё внутри контейнера (host остаётся чистым)
+```
+- Юнит-тесты (`tests/unit/{sre-agent,alert-analyzer}`) — чистая логика, гоняются всегда, стек не нужен. Сьюты запускаются ОТДЕЛЬНЫМИ процессами: у сервисов одноимённые модули `store`/`metrics`/`models`, в одном интерпретаторе им нельзя.
+- Интеграционные (`tests/integration`) — против живого стека по DNS имёнам compose-сервисов; сами скипаются, если `/api/health` недоступен. Включают вечный регресс «confidence — число» и дедуп-сценарий (повтор детектится только после флаша).
+- Тесты требуют собранного образа `auto-sre-agent:dev` (`Dockerfile.tests` = он + pytest). Если образа нет — `docker compose -f docker-compose.dev.yml build sre-agent`.
+- `test_webhook_*` создают записи в БД с уникальными fingerprint — безопасно для повторных прогонов.
+
 ### Health checks
 ```bash
 curl http://localhost:8096/api/health   # sre-agent (no auth)
@@ -113,4 +122,4 @@ alert-analyzer (:8097): `/webhook`, `/webhook/test`, `/api/analyses[/{id}]`, `/a
 - **HTTP path normalization in metrics middleware** (`/api/findings/{id}`, `/api/{endpoint}`) — keep it, prevents label explosion.
 - **VL unreachable locally** → scans hang through retry/backoff/circuit-breaker (minutes), UI and health stay fine; check `sre.vl` log lines. Scan with dead VL sets `last_error = "Victoria Logs недоступен…"` and does NOT update `last_scan` — "0 аномалий" при недоступном VL не считается успехом. LLM availability in `/api/health` comes from a cached `/v1/models` probe (`llm.reachable`) + circuit breaker state, not from the configured model name.
 - **`npx playwright-cli eval` takes an expression, not statements** — `a; b` throws SyntaxError. Use `(() => { a; return b; })()`. Discarding eval output with `>/dev/null 2>&1` hides these failures — don't.
-- **No test suite, no lint/typecheck config** — verify via manual API calls, `/metrics`, and Playwright UI checks.
+- ~~No test suite~~ Тесты есть: `./scripts/run-tests.sh` (см. Key Commands). Линт/тайпчек по-прежнему нет.
