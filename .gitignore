@@ -1,0 +1,14 @@
+# Local dev artifacts (rendered from templates/, never commit)
+.env
+docker-compose.dev.yml
+
+# Python
+__pycache__/
+*.pyc
+
+# Playwright CLI session artifacts (snapshots, screenshots, console logs)
+.playwright-cli/
+
+# Agent configs and data
+.claude
+opencode.json

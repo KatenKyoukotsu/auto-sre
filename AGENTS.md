@@ -2,178 +2,111 @@
 
 ## Project Type
 Ansible role that deploys four Docker services (defined in `templates/docker-compose.yml.j2`):
-- **postgres** (port 5432): PostgreSQL 16 for findings/blog/outbox/alert_analysis storage
-- **kafka** (port 9092): KRaft mode Kafka for event streaming (findings, blog, scan events)
-- **sre-agent** (port 8096): FastAPI + APScheduler for periodic log scanning, LLM analysis, web UI, metrics
-- **alert-analyzer** (port 8097): FastAPI for Alertmanager webhook ingestion, alert batching + LLM correlation
+- **postgres** (5432): PostgreSQL 16 — findings, blog_posts, outbox_events, alert_analysis
+- **kafka** (9092): KRaft single-node — topics `auto-sre.findings`, `auto-sre.blog`, `auto-sre.scan-events`
+- **sre-agent** (8096): FastAPI + APScheduler — VL log scanning, anomaly detection, LLM analysis, web UI
+- **alert-analyzer** (8097): FastAPI — Alertmanager webhook ingestion, batching + LLM correlation
 
-> `README.md` is up to date (rewritten for the current architecture). Detailed docs live in `docs/`.
+> README.md and docs/ are current. Code comments/logs are in Russian — expected, not a bug.
 
 ## Key Commands
 
 ### Deploy (production)
 ```bash
-ansible-playbook -i inventory/all-01-prod auto-sre.yaml
+ansible-playbook -i inventory/all-01-prod auto-sre.yaml --ask-vault-pass
+```
+Ansible copies `files/` → `/opt/docker/auto-sre/{common,sre-agent,alert-analyzer}/`, renders `.env` + compose, runs `docker compose down && up -d --build`. Note: deployed layout flattens `files/` — that's why prod compose build contexts are `./sre-agent` but dev compose uses `./files/sre-agent`.
+
+### Local development (repo root, macOS-friendly)
+```bash
+cp templates/docker-compose.dev.yml.j2 docker-compose.dev.yml   # template has NO Jinja vars — plain copy works
+cat > .env   # needed: VL_*, LITELLM_*, POSTGRES_*, AUTH_*, ALERT_* (see templates/env.j2 for names/defaults)
+docker compose -f docker-compose.dev.yml up -d --build
+docker compose -f docker-compose.dev.yml logs -f sre-agent
+```
+Dev compose mounts `files/sre-agent` and `files/alert-analyzer` at `/app` with `uvicorn --reload` — Python edits apply without rebuild; requirements.txt changes need `--build`.
+
+### Health checks
+```bash
+curl http://localhost:8096/api/health   # sre-agent (no auth)
+curl http://localhost:8097/api/health   # alert-analyzer (no auth)
+curl http://localhost:8096/metrics      # Prometheus (no auth)
 ```
 
 ### Manual scan trigger after deploy
 ```bash
-curl -X POST http://<host>:8096/api/trigger/scan
+curl -u user:pass -X POST http://<host>:8096/api/trigger/scan
 ```
 
-### Local development (run containers directly)
-```bash
-cd /opt/docker/auto-sre  # or wherever docker-compose.yml lives
-docker compose up -d --build
-docker compose logs -f sre-agent
-```
-
-> The compose expects `files/sre-agent/migrations/01_init.sql` for PostgreSQL schema init (mounted at `/docker-entrypoint-initdb.d`).
-
-### Health checks
-```bash
-curl http://<host>:8096/api/health       # sre-agent (public)
-curl http://<host>:8096/metrics          # Prometheus metrics (public)
-```
+### Browser UI debugging
+`opencode.json` wires `.claude/skills/playwright-cli` — use `npx playwright-cli open/goto/snapshot/click/find` against `http://localhost:8096/` (wall) and `/blog`. Install chromium once: `npx playwright install chromium`.
 
 ## Architecture Notes
 
 | Component | Path | Purpose |
 |-----------|------|---------|
-| Ansible tasks | `tasks/main.yml` | Copies sources, renders `.env` + `docker-compose.yml`, runs `docker compose up` |
-| Shared LLM client | `files/common/llm_client.py` | OpenAI-compatible client with retry + circuit breaker (used by alert-analyzer) |
-| sre-agent API | `files/sre-agent/app.py` | FastAPI + APScheduler + Basic Auth + Prometheus middleware |
-| SRE logic | `files/sre-agent/agent.py` | Rolling baseline anomaly detection + LLM analysis + dedup + Kafka outbox |
-| LLM client | `files/sre-agent/llm.py` | LiteLLM (OpenAI-compatible) with retry + circuit breaker |
-| VL client | `files/sre-agent/vl.py` | Direct HTTP to Victoria Logs with retry + circuit breaker (httpx) |
-| Kafka producer | `files/sre-agent/kafka_producer.py` | Idempotent producer + transactional outbox pattern |
-| Kafka consumer | `files/sre-agent/kafka_consumer.py` | Background worker for LLM analysis + lag metrics |
-| Storage | `files/sre-agent/store.py` | PostgreSQL via SQLAlchemy 2.0 async (findings, blog, outbox) |
-| Metrics | `files/sre-agent/metrics.py` | 90+ Prometheus metrics definitions |
-| Alerting | `files/sre-agent/alerting/auto-sre-rules.yaml` | PrometheusRule: 25+ rules |
-| alert-analyzer API | `files/alert-analyzer/app.py` | Alertmanager webhook + Basic Auth + flush task |
-| Alert batching | `files/alert-analyzer/analyzer.py` | Time/size windowing, dedup by fingerprint, LLM correlation |
-| Alert storage | `files/alert-analyzer/store.py` | PostgreSQL `alert_analysis` table (sharding-ready) |
-| Templates | `templates/env.j2`, `docker-compose.yml.j2`, `docker-compose.dev.yml.j2` | Rendered by Ansible with inventory vars |
+| Ansible tasks | `tasks/main.yml` | Copy sources, render `.env` + compose, `docker compose up` |
+| Shared LLM client | `files/common/llm_client.py` | OpenAI SDK → LiteLLM server, retry + circuit breaker |
+| sre-agent API | `files/sre-agent/app.py` | FastAPI + APScheduler + Basic Auth middleware + Prometheus |
+| SRE logic | `files/sre-agent/agent.py` | Rolling-baseline detection + dedup + outbox writes |
+| LLM client | `files/sre-agent/llm.py` | Prompts `ANALYZE_SYSTEM_PROMPT` / `BLOG_SYSTEM_PROMPT`, JSON extraction |
+| VL client | `files/sre-agent/vl.py` | Direct HTTP to Victoria Logs LogsQL (`/select/logsql/*`) |
+| Kafka producer | `files/sre-agent/kafka_producer.py` | Idempotent producer + outbox poller (`process_outbox`) |
+| Kafka consumer | `files/sre-agent/kafka_consumer.py` | Background worker: LLM analysis of findings, lag metrics |
+| Storage | `files/sre-agent/store.py` | SQLAlchemy 2.0 async models + `init_db()` (create_all) |
+| Alert batching | `files/alert-analyzer/analyzer.py` | Time/size windowing, fingerprint dedup, `ALERT_ANALYSIS_SYSTEM_PROMPT` |
+| PrometheusRule | `files/sre-agent/alerting/auto-sre-rules.yaml` | 25+ alerting rules |
 
-## Entrypoints
-- **postgres**: `postgres` (healthcheck via `pg_isready`)
-- **kafka**: `kafka` KRaft (healthcheck via `kafka-broker-api-versions`)
-- **sre-agent**: `uvicorn app:app --host 0.0.0.0 --port 8096`
-- **alert-analyzer**: `uvicorn app:app --host 0.0.0.0 --port 8097`
+- **Build contexts**: sre-agent builds from its own dir; alert-analyzer builds from `files/` root (`dockerfile: alert-analyzer/Dockerfile`) so it can `COPY common/`. `files/common/llm_client.py` does `from metrics import ...` — it depends on alert-analyzer's `metrics.py` being importable; don't "fix" this import, it's why the context is the parent dir.
+- **Data flow**: finding + outbox event written in one DB transaction → poller sends to Kafka every 5s → consumer runs LLM analysis and updates the finding row.
+- **Alembic is configured but unused**: `alembic.ini` + `migrations/env.py` exist (target = `store.Base`), but there are no `versions/`; schema comes from SQL mounts + `init_db()` create_all. `alembic.ini` hardcodes the DB URL.
 
-> **Build contexts**: sre-agent builds from `./sre-agent`; alert-analyzer builds from repo root (`context: .`, `dockerfile: alert-analyzer/Dockerfile`) so it can `COPY common/`. `files/common/` is the single source of truth for the shared LLM client — do not duplicate it inside service dirs.
+## Environment Variables (templates/env.j2)
+Rendered by Ansible from inventory (`auto_sre_*` vars with fallbacks). Compose passes them via `${VAR}` interpolation.
 
-## Environment Variables (from `templates/env.j2`)
-All injected via Ansible inventory. Key ones:
+- **VL**: `VL_URL`, `VL_USERNAME`, `VL_PASSWORD`
+- **LLM**: `LITELLM_URL`, `LITELLM_API_KEY`, `LITELLM_MODEL` (default model is a local Gemma gguf)
+- **Postgres**: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` → injected as `DATABASE_URL` by compose
+- **Kafka**: `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_TOPIC_FINDINGS/BLOG/SCAN_EVENTS`, `KAFKA_CONSUMER_GROUP`
+- **Scheduling**: `SCAN_INTERVAL_MINUTES` (15), `BLOG_HOUR`/`BLOG_MINUTE` (7:30), `TZ` (Europe/Moscow)
+- **Auth**: `AUTH_ENABLED` (true), `AUTH_USERNAME`, `AUTH_PASSWORD`
+- **Alert-analyzer**: `ALERT_BATCH_WINDOW_SEC` (300), `ALERT_BATCH_MAX` (20), `ALERT_DEDUP_WINDOW` (3600), `FLUSH_INTERVAL` (60)
+- **Other**: `LOG_LEVEL` (INFO)
 
-### Victoria Logs
-- `VL_URL`, `VL_USERNAME`, `VL_PASSWORD` — Victoria Logs connection
-- `VL_TIMEOUT`, `VL_MAX_RETRIES`, `VL_RETRY_BASE_DELAY` — VL client tuning
-- `VL_CIRCUIT_BREAKER_THRESHOLD`, `VL_CIRCUIT_BREAKER_TIMEOUT` — circuit breaker
-
-### LLM (LiteLLM)
-- `LITELLM_URL`, `LITELLM_API_KEY`, `LITELLM_MODEL` — LLM backend
-- `LLM_TIMEOUT`, `LLM_MAX_RETRIES`, `LLM_RETRY_BASE_DELAY` — LLM client tuning
-- `LLM_CIRCUIT_BREAKER_THRESHOLD`, `LLM_CIRCUIT_BREAKER_TIMEOUT` — circuit breaker
-
-### Kafka
-- `KAFKA_BOOTSTRAP_SERVERS` — default `kafka:9092`
-- `KAFKA_TOPIC_FINDINGS`, `KAFKA_TOPIC_BLOG`, `KAFKA_TOPIC_SCAN_EVENTS`
-- `KAFKA_CONSUMER_GROUP` — default `auto-sre-worker`
-
-### PostgreSQL
-- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
-
-### Scheduling & Detection
-- `SCAN_INTERVAL_MINUTES` — periodic scan interval (default 15)
-- `BLOG_HOUR`, `BLOG_MINUTE`, `TZ` — daily blog schedule (default 07:30 Europe/Moscow)
-- `ERROR_PATTERN`, `HISTORY_HOURS`, `WINDOW_MINUTES`, `SPIKE_STD_MULTIPLIER`, `MIN_ABS_SPIKE`, `DEDUP_MINUTES`, `MAX_STREAMS`
-
-### Auth
-- `AUTH_ENABLED` — `true`/`false` (default true)
-- `AUTH_USERNAME`, `AUTH_PASSWORD` — Basic Auth credentials
-
-### Alert-analyzer
-- `ALERT_BATCH_WINDOW_SEC` — batching window (default 300)
-- `ALERT_BATCH_MAX` — max alerts per batch (default 20)
-- `ALERT_DEDUP_WINDOW` — fingerprint dedup window in seconds (default 3600)
-- `FLUSH_INTERVAL` — periodic flush interval in seconds (default 60)
-
-### Other
-- `LOG_LEVEL` — default `INFO`
-- `SHUTDOWN_TIMEOUT` — graceful shutdown wait (default 30s)
-
-## Data Persistence
-- **PostgreSQL**: `/opt/data/auto-sre/postgres` (volume)
-- **Kafka**: `/opt/data/auto-sre/kafka` (volume)
-- **App sources**: `/opt/docker/auto-sre/`
-
-## REST API (sre-agent, port 8096)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/findings` | Basic | List findings |
-| GET | `/api/findings/{id}` | Basic | Single finding |
-| POST | `/api/findings/{id}/ack` | Basic | Acknowledge finding |
-| GET | `/api/blog` | Basic | Blog posts |
-| GET | `/api/blog/status` | Basic | Blog generation status |
-| POST | `/api/trigger/scan` | Basic | Manual anomaly scan |
-| POST | `/api/trigger/full-scan` | Basic | Full historical scan |
-| POST | `/api/trigger/blog` | Basic | Manual blog generation |
-| GET | `/api/health` | **None** | Service status + last scan info |
-| GET | `/metrics` | **None** | Prometheus metrics |
-| GET | `/` | Basic | Web UI: anomaly wall |
-| GET | `/blog` | Basic | Web UI: blog digest |
-| GET | `/static/*` | **None** | Static assets |
-
-## REST API (alert-analyzer, port 8097)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/webhook` | Basic* | Alertmanager webhook ingestion |
-| POST | `/webhook/test` | Basic* | Test webhook (no DB write) |
-| GET | `/api/analyses` | Basic* | List analyses (filters: `alertname`, `severity`, `status`, `since`) |
-| GET | `/api/analyses/{id}` | Basic* | Single analysis |
-| GET | `/api/stats` | Basic* | Buffer stats + counters |
-| POST | `/api/flush` | Basic* | Force-flush buffered alerts through LLM analysis |
-| GET | `/api/health` | **None** | Service status + buffer stats |
-| GET | `/metrics` | **None** | Prometheus metrics |
-
-\* controlled by `AUTH_ENABLED`. Alertmanager config example in `README.md`.
+> Tuning vars exist only as code defaults, NOT wired through env.j2/compose: `ERROR_PATTERN`, `HISTORY_HOURS`, `WINDOW_MINUTES`, `SPIKE_STD_MULTIPLIER`, `SPIKE_MEAN_MULTIPLIER`, `MIN_ABS_SPIKE`, `SAMPLE_LIMIT`, `MAX_STREAMS`, `DEDUP_MINUTES`, `FULL_SCAN_*` (agent.py:40-53), `LLM_TIMEOUT`/`LLM_MAX_RETRIES`/circuit-breaker vars (llm.py, common/llm_client.py), `VL_TIMEOUT`/retries (vl.py), `SHUTDOWN_TIMEOUT` (app.py). Changing them means editing defaults or adding pass-through in compose.
+> Dead config: `KAFKA_TOPIC_ALERTS` / `KAFKA_CONSUMER_GROUP_ALERTS` in env.j2 — nothing consumes them; alert-analyzer doesn't use Kafka despite having aiokafka in requirements.
 
 ## Detection Logic (agent.py)
-1. Fetches error counts per stream in rolling windows (`HISTORY_HOURS` back, `WINDOW_MINUTES` each)
-2. Computes baseline (mean/std), flags spike if `current > max(mean + 3*std, 2*mean)` AND `current >= MIN_ABS_SPIKE (20)`
-3. Creates finding + outbox event atomically in PostgreSQL transaction
-4. Outbox poller sends to Kafka topic `auto-sre.findings`
-5. Consumer worker picks up, runs LLM analysis, updates finding in DB
-6. Deduplicates by stream within `DEDUP_MINUTES` (default 60)
+1. Rolling windows: `HISTORY_HOURS` back, `WINDOW_MINUTES` each; per-stream error counts via LogsQL
+2. Spike if `current > max(mean + SPIKE_STD_MULTIPLIER*std, SPIKE_MEAN_MULTIPLIER*mean)` AND `current >= MIN_ABS_SPIKE (20)`
+3. Finding + outbox event in one PostgreSQL transaction; poller → Kafka → consumer → LLM → row update
+4. Dedup by stream within `DEDUP_MINUTES` (60); full-scan variant enumerates all streams over a range
 
-## Development Notes
-- **Python version**: 3.12 (slim base image)
-- **Dependencies**: See `files/sre-agent/requirements.txt`
-- **No test suite** — verify via manual API calls and log inspection
-- **Lint/typecheck**: None configured
-- **Code style**: Standard Python, async/await throughout
+## REST API
+sre-agent (:8096): `/api/findings[/{id}[/ack]]`, `/api/blog[/status]`, `/api/trigger/{scan,full-scan,blog}`, `/api/health`*, `/metrics`*, `/` + `/blog` (web UI), `/static/*`*
+alert-analyzer (:8097): `/webhook`, `/webhook/test`, `/api/analyses[/{id}]`, `/api/stats`, `/api/flush`, `/api/health`*, `/metrics`*
+
+\* no auth. Everything else behind Basic Auth when `AUTH_ENABLED=true` (alert-analyzer: per-route `Depends(verify_auth)`; sre-agent: middleware with `AUTH_EXCLUDE_PATHS`).
+
+## Data Persistence
+- PostgreSQL: `/opt/data/auto-sre/postgres`, Kafka: `/opt/data/auto-sre/kafka` (prod bind mounts — won't work on macOS Docker Desktop; dev compose uses named volumes)
+- Sources on server: `/opt/docker/auto-sre/`
 
 ## Common Tasks for Agents
-- **Modify detection thresholds** → Edit constants in `agent.py` (lines ~25-38) or add env vars
-- **Change LLM prompt** → Edit `llm.py` methods `analyze_logs` / `write_blog_post` (sre-agent) or `analyzer.py` ALERT_ANALYSIS_*_PROMPT (alert-analyzer)
-- **Add API endpoint** → Edit `app.py`, follow existing patterns (add to `AUTH_EXCLUDE_PATHS` if public)
-- **Adjust scheduling** → Change `SCAN_INTERVAL_MINUTES` or cron in `app.py` lifespan
-- **Debug VL connectivity** → Check `vl.py` logs at `LOG_LEVEL=DEBUG`
-- **Debug Kafka** → Check `kafka_producer.py` / `kafka_consumer.py` logs, consumer lag via metrics
-- **Add Prometheus metric** → Define in `metrics.py`, import and use in relevant module
-- **Add alert rule** → Edit `alerting/auto-sre-rules.yaml`
+- **Detection thresholds** → constants atop `agent.py` (see env-var caveat above)
+- **LLM prompts** → `llm.py` (sre-agent), `ALERT_ANALYSIS_*PROMPT` in `analyzer.py` (alert-analyzer)
+- **New endpoint** → `app.py`; public path must be added to `AUTH_EXCLUDE_PATHS` (sre-agent)
+- **New metric** → define in `metrics.py` first (both services have their own)
+- **Schema change** → update `store.py` models AND `migrations/01_init.sql` (fresh DBs are built from SQL, existing DBs from create_all — keep both in sync)
+- **Alert rules** → `files/sre-agent/alerting/auto-sre-rules.yaml`
 
 ## Gotchas
-- `VL_PASSWORD` / `POSTGRES_PASSWORD` / `AUTH_PASSWORD` come from Ansible inventory, not hardcoded
-- `VL_MODE` removed — only direct HTTP to VL (no MCP)
-- **PostgreSQL required** — SQLite removed; schema auto-created via `init_db()` on startup
-- **Kafka required** — outbox pattern for guaranteed delivery; consumer runs LLM analysis async
-- **Basic Auth** enabled by default; `/api/health`, `/metrics`, `/static/*` excluded
-- **Graceful shutdown**: waits for background tasks (`SHUTDOWN_TIMEOUT`), closes VL client, Kafka producer/consumer, DB pool
-- **Outbox pattern**: finding + Kafka event written in same DB transaction; poller sends every 5s
-- **Russian logging output** in code — expected, not a bug
-- **Metrics cardinality**: HTTP path normalized (`/api/findings/{id}`) to avoid label explosion
-- **Labeled metrics need `.labels()` before observe/inc** — unlabeled call raises at runtime (e.g. `alert_analysis_duration_seconds["result"]`)
-- **Postgres init mounts**: each migration file mounted individually (`01_sre_agent.sql`, `02_alert_analyzer.sql`) — postgres entrypoint glob is non-recursive and later mounts override earlier ones at the same path
+- **Prod compose passes `AUTH_*` only to alert-analyzer, not sre-agent** → in prod sre-agent gets empty password → `expected_auth=None` → Basic Auth silently disabled (app.py middleware skips when no password). Wire the vars in if auth is required.
+- **Kafka KRaft requires `CLUSTER_ID`** (added to both templates). If an existing kafka data dir was formatted with a different ID, container dies with InconsistentClusterId.
+- **aiokafka constraints**: no `max_in_flight_requests_per_connection` kwarg (crashes producer init); snappy compression requires `aiokafka[snappy]` extra (already in requirements.txt — don't downgrade to plain `aiokafka`).
+- **Postgres init mounts**: each migration mounted individually (`01_sre_agent.sql`, `02_alert_analyzer.sql`) — entrypoint glob is non-recursive; later mounts override earlier ones at the same path.
+- **Secrets come from Ansible inventory** (`victorialogs_password`, `auto_sre_postgres_password`, `auto_sre_auth_password`) — never hardcode.
+- **Labeled metrics need `.labels(...)` before inc/observe** — unlabeled call raises at runtime.
+- **HTTP path normalization in metrics middleware** (`/api/findings/{id}`, `/api/{endpoint}`) — keep it, prevents label explosion.
+- **VL unreachable locally** → scans hang through retry/backoff/circuit-breaker (minutes), UI and health stay fine; check `sre.vl` log lines.
+- **No test suite, no lint/typecheck config** — verify via manual API calls, `/metrics`, and Playwright UI checks.

@@ -32,6 +32,7 @@ services:
     restart: unless-stopped
     environment:
       - KAFKA_NODE_ID=1
+      - CLUSTER_ID=5L6g3nShT-eMCtK--X86sw
       - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
@@ -60,7 +61,7 @@ services:
 
   sre-agent:
     build:
-      context: ./sre-agent
+      context: ./files/sre-agent
       dockerfile: Dockerfile
     image: auto-sre-agent:dev
     container_name: auto-sre-agent-dev
@@ -91,7 +92,6 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       - ./files/sre-agent:/app:cached
-      - /opt/data/auto-sre:/opt/data/auto-sre
     ports:
       - "8096:8096"
     command: uvicorn app:app --host 0.0.0.0 --port 8096 --reload
@@ -100,7 +100,7 @@ services:
 
   alert-analyzer:
     build:
-      context: .
+      context: ./files
       dockerfile: alert-analyzer/Dockerfile
     image: auto-sre-alert-analyzer:dev
     container_name: auto-sre-alert-analyzer-dev
