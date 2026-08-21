@@ -15,7 +15,7 @@ Ansible role that deploys four Docker services (defined in `templates/docker-com
 ```bash
 ansible-playbook -i inventory/all-01-prod auto-sre.yaml --ask-vault-pass
 ```
-Ansible copies `files/` → `/opt/docker/auto-sre/{common,sre-agent,alert-analyzer}/`, renders `.env` + compose, runs `docker compose down && up -d --build`. Note: deployed layout flattens `files/` — that's why prod compose build contexts are `./sre-agent` but dev compose uses `./files/sre-agent`.
+Ansible copies `files/` → `/opt/docker/auto-sre/{common,sre-agent,alert-analyzer,frontend}/`, renders `.env` + compose, runs `docker compose down && up -d --build`. Note: deployed layout flattens `files/` — that's why prod and dev compose both build sre-agent/alert-analyzer from the `files/` root (`dockerfile: sre-agent/Dockerfile`).
 
 ### Local development (repo root, macOS-friendly)
 ```bash
@@ -24,7 +24,7 @@ cat > .env   # needed: VL_*, LITELLM_*, POSTGRES_*, AUTH_*, ALERT_* (see templat
 docker compose -f docker-compose.dev.yml up -d --build
 docker compose -f docker-compose.dev.yml logs -f sre-agent
 ```
-Dev compose mounts `files/sre-agent` and `files/alert-analyzer` at `/app` with `uvicorn --reload` — Python edits apply without rebuild; requirements.txt changes need `--build`.
+Dev compose mounts `files/sre-agent` and `files/alert-analyzer` at `/app` with `uvicorn --reload`, plus `files/frontend` at `/app/static` — Python edits apply without rebuild; requirements.txt changes need `--build`.
 
 ### Health checks
 ```bash
@@ -54,10 +54,12 @@ curl -u user:pass -X POST http://<host>:8096/api/trigger/scan
 | Kafka producer | `files/sre-agent/kafka_producer.py` | Idempotent producer + outbox poller (`process_outbox`) |
 | Kafka consumer | `files/sre-agent/kafka_consumer.py` | Background worker: LLM analysis of findings, lag metrics |
 | Storage | `files/sre-agent/store.py` | SQLAlchemy 2.0 async models + `init_db()` (create_all) |
+| Frontend | `files/frontend/` | Static UI (no build step): `index.html`/`blog.html` shells, `css/{tokens,base,animations}.css`, ES-modules in `js/`, vendored marked+DOMPurify in `vendor/`. Served from `/app/static`; `/` and `/blog` are FileResponse with `Cache-Control: no-cache`, `/static` is NoCacheStaticFiles (ETag revalidation) |
 | Alert batching | `files/alert-analyzer/analyzer.py` | Time/size windowing, fingerprint dedup, `ALERT_ANALYSIS_SYSTEM_PROMPT` |
 | PrometheusRule | `files/sre-agent/alerting/auto-sre-rules.yaml` | 25+ alerting rules |
 
-- **Build contexts**: sre-agent builds from its own dir; alert-analyzer builds from `files/` root (`dockerfile: alert-analyzer/Dockerfile`) so it can `COPY common/`. `files/common/llm_client.py` does `from metrics import ...` — it depends on alert-analyzer's `metrics.py` being importable; don't "fix" this import, it's why the context is the parent dir.
+- **Build contexts**: both sre-agent and alert-analyzer build from the `files/` root (`dockerfile: sre-agent/Dockerfile`, `dockerfile: alert-analyzer/Dockerfile`) so they can `COPY common/` and, for sre-agent, `COPY frontend/ ./static/`. `files/common/llm_client.py` does `from metrics import ...` — it depends on alert-analyzer's `metrics.py` being importable; don't "fix" this import, it's why the context is the parent dir.
+- **Frontend is Jinja-free**: `/` and `/blog` serve static shells; all data comes from the JSON API and is rendered client-side (`js/wall.js`, `js/blog.js`). Live wall polls `/api/findings?limit=100` every 15s with client-side diff by id (new cards get `.card-enter` + stagger `--i`). Blog typewriter plays only for posts that appeared while the page is open (sessionStorage seen-set); click skips it.
 - **Data flow**: finding + outbox event written in one DB transaction → poller sends to Kafka every 5s → consumer runs LLM analysis and updates the finding row.
 - **Alembic is configured but unused**: `alembic.ini` + `migrations/env.py` exist (target = `store.Base`), but there are no `versions/`; schema comes from SQL mounts + `init_db()` create_all. `alembic.ini` hardcodes the DB URL.
 
@@ -95,7 +97,8 @@ alert-analyzer (:8097): `/webhook`, `/webhook/test`, `/api/analyses[/{id}]`, `/a
 ## Common Tasks for Agents
 - **Detection thresholds** → constants atop `agent.py` (see env-var caveat above)
 - **LLM prompts** → `llm.py` (sre-agent), `ALERT_ANALYSIS_*PROMPT` in `analyzer.py` (alert-analyzer)
-- **New endpoint** → `app.py`; public path must be added to `AUTH_EXCLUDE_PATHS` (sre-agent)
+- **New endpoint** → `app.py`; public path must be added to `AUTH_EXCLUDE_PATHS` (sre-agent); fetch wrapper goes to `files/frontend/js/api.js`
+- **UI changes** → static shells + ES-modules in `files/frontend/`; animations/timings in `css/animations.css` (tokens in `tokens.css`); no build step — edit and refresh
 - **New metric** → define in `metrics.py` first (both services have their own)
 - **Schema change** → update `store.py` models AND `migrations/01_init.sql` (fresh DBs are built from SQL, existing DBs from create_all — keep both in sync)
 - **Alert rules** → `files/sre-agent/alerting/auto-sre-rules.yaml`
@@ -109,4 +112,5 @@ alert-analyzer (:8097): `/webhook`, `/webhook/test`, `/api/analyses[/{id}]`, `/a
 - **Labeled metrics need `.labels(...)` before inc/observe** — unlabeled call raises at runtime.
 - **HTTP path normalization in metrics middleware** (`/api/findings/{id}`, `/api/{endpoint}`) — keep it, prevents label explosion.
 - **VL unreachable locally** → scans hang through retry/backoff/circuit-breaker (minutes), UI and health stay fine; check `sre.vl` log lines.
+- **`npx playwright-cli eval` takes an expression, not statements** — `a; b` throws SyntaxError. Use `(() => { a; return b; })()`. Discarding eval output with `>/dev/null 2>&1` hides these failures — don't.
 - **No test suite, no lint/typecheck config** — verify via manual API calls, `/metrics`, and Playwright UI checks.
