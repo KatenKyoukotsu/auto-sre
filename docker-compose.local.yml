@@ -37,9 +37,36 @@ services:
       - LITELLM_MODEL=qwen2.5:3b-instruct
       - LLM_MAX_TOKENS=2500
 
+  prometheus:
+    image: prom/prometheus:v3.7.2
+    container_name: auto-sre-prometheus-local
+    hostname: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./scripts/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./files/sre-agent/alerting/auto-sre-rules.yaml:/etc/prometheus/auto-sre-rules.yaml:ro
+      - prometheus-local-data:/prometheus
+    networks:
+      - auto-sre-dev-net
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: auto-sre-alertmanager-local
+    hostname: alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./scripts/local/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - auto-sre-dev-net
+
 networks:
   auto-sre-dev-net:
     driver: bridge
 
 volumes:
   vl-local-data:
+  prometheus-local-data:

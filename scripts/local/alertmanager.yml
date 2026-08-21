@@ -1,0 +1,17 @@
+# Локальный Alertmanager: маршрутизирует всё в alert-analyzer
+# В проде AUTH_ENABLED=true — добавить basic_auth в webhook_configs
+global:
+  resolve_timeout: 1m
+
+route:
+  receiver: auto-sre
+  group_by: [alertname, severity]
+  group_wait: 1s
+  group_interval: 5s
+  repeat_interval: 1h
+
+receivers:
+  - name: auto-sre
+    webhook_configs:
+      - url: http://alert-analyzer:8097/webhook
+        send_resolved: true
