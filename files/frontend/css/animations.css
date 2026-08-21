@@ -1,0 +1,113 @@
+/* --- AI-панель: ещё не готовый ответ --- */
+.ai-pending {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.ai-pending::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgba(79, 140, 255, .10) 50%, transparent 70%);
+  animation: ai-shimmer 2.4s linear infinite;
+}
+
+@keyframes ai-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.ai-pending-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+
+.ai-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: ai-spin 0.9s linear infinite;
+}
+
+@keyframes ai-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-pending-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.ai-ghost {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+  animation: ai-blink 2s ease-in-out infinite;
+}
+
+@keyframes ai-blink {
+  0%, 100% { opacity: .45; }
+  50% { opacity: 1; }
+}
+
+.ai-dots { display: inline-flex; gap: 5px; }
+
+.ai-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: ai-dot 1.2s ease-in-out infinite;
+}
+
+.ai-dots span:nth-child(2) { animation-delay: .18s; }
+.ai-dots span:nth-child(3) { animation-delay: .36s; }
+
+@keyframes ai-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: .35; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* --- печать ответа по буквам --- */
+.typing-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  vertical-align: text-bottom;
+  margin-left: 1px;
+  background: var(--accent);
+  animation: caret-blink .8s step-end infinite;
+}
+
+@keyframes caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.post-type {
+  min-height: 2.4em;
+  color: var(--muted);
+}
+
+.post-type .post-body { color: var(--text); }
+
+.post-body.fade-in {
+  animation: fade-in .6s ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
