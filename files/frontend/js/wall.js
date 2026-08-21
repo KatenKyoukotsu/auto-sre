@@ -48,17 +48,41 @@ function renderSkeletons(box, count) {
 
 // ---- статус-бар ----
 
+const LLM_LABELS = {
+  ok: 'доступна',
+  failing: 'сбои',
+  open: 'недоступна',
+};
+
+function llmLabel(llm) {
+  if (llm.reachable === false) return 'недоступна';
+  return LLM_LABELS[llm.state] || llm.state || 'неизвестно';
+}
+
 function renderStatus(health) {
   statusBox.textContent = '';
   const dot = el('span', 'status-dot');
+
+  const llm = health.llm || {};
+  const degraded = llm.reachable === false || (llm.state && llm.state !== 'ok') || health.last_error;
+  if (degraded) dot.classList.add('warn');
 
   const info = el('div');
   info.appendChild(el('strong', null, 'Состояние продакшена'));
 
   const meta = el('div', 'status-meta');
-  meta.append(`Модель: ${health.model} · Последний скан: ${health.last_scan || 'ещё не выполнялся'}`);
+  meta.append(
+    `Модель: ${llm.model || health.model} — ${llmLabel(llm)}`,
+    ` · Последний скан: ${health.last_scan ? formatDate(health.last_scan) : 'ещё не выполнялся'}`,
+  );
+  if (llm.last_ok) {
+    meta.append(` · LLM отвечала: ${formatDate(llm.last_ok)}`);
+  }
+  if (llm.last_error) {
+    meta.appendChild(el('div', 'error-line', `LLM: ${llm.last_error}`));
+  }
   if (health.last_error) {
-    meta.appendChild(el('div', 'error-line', `Ошибка скана: ${health.last_error}`));
+    meta.appendChild(el('div', 'error-line', `Скан: ${health.last_error}`));
   }
 
   info.appendChild(meta);
@@ -102,6 +126,8 @@ function renderFinding(f, isNew) {
 }
 
 function appendFindings(findings, markNew) {
+  // скелетоны — только для момента первой загрузки
+  findingsBox.querySelectorAll('.skeleton-card').forEach(n => n.remove());
   const emptyBox = findingsBox.querySelector('.empty');
   if (!findings.length) {
     if (!rendered.size && !emptyBox) {
@@ -223,17 +249,35 @@ document.getElementById('trigger-full-scan').addEventListener('click', async (e)
 renderSkeletons(findingsBox, 3);
 
 let firstLoad = true;
+let failures = 0;
 
-async function pollTick() {
-  const [health, findings] = await Promise.all([api.getHealth(), api.getFindings(100)]);
-  renderStatus(health);
-  appendFindings(findings, !firstLoad);
-  firstLoad = false;
+function setPollError(message) {
+  let box = findingsBox.querySelector('.poll-error');
+  if (!message) {
+    if (box) box.remove();
+    return;
+  }
+  if (!box) {
+    box = el('div', 'poll-error');
+    findingsBox.prepend(box);
+  }
+  box.textContent = message;
 }
 
-pollTick()
-  .catch(err => {
-    findingsBox.textContent = '';
-    findingsBox.appendChild(el('div', 'empty error-line', 'Не удалось загрузить данные: ' + err.message));
-  })
-  .finally(() => setInterval(() => pollTick().catch(() => {}), POLL_INTERVAL_MS));
+async function pollTick() {
+  try {
+    const [health, findings] = await Promise.all([api.getHealth(), api.getFindings(100)]);
+    failures = 0;
+    setPollError(null);
+    renderStatus(health);
+    appendFindings(findings, !firstLoad);
+    firstLoad = false;
+  } catch (err) {
+    // тишина хуже честного баннера: показываем сразу, снимаем при первом успехе
+    failures += 1;
+    if (failures >= 1) setPollError('Нет связи с сервером: ' + err.message);
+  }
+}
+
+setInterval(() => pollTick(), POLL_INTERVAL_MS);
+pollTick();

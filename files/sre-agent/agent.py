@@ -138,6 +138,9 @@ class Agent:
         except Exception as exc:
             logger.warning("get_streams сбой, работаем без разбивки по потокам: %s", exc)
             streams = [{"stream": None}]
+            vl_failures = 1
+        else:
+            vl_failures = 0
 
         scan_streams_checked.set(len(streams[:MAX_STREAMS]))
         candidates = []
@@ -151,6 +154,7 @@ class Agent:
                 current_count = await self.vl.count_logs(query, current["start"], current["end"])
             except Exception as exc:
                 logger.warning("серия для потока %s не получена: %s", stream, exc)
+                vl_failures += 1
                 continue
             is_spike, mean, latest = self._is_spike(series, current_count)
             if is_spike:
@@ -160,6 +164,14 @@ class Agent:
         scan_windows_queried.inc(windows_count)
 
         if not candidates:
+            if vl_failures:
+                # VL был недоступен: «нуль аномалий» здесь не значит «всё чисто»
+                self.last_error = f"Victoria Logs недоступен — неудачных запросов: {vl_failures}"
+                last_scan_error.set(1)
+                scan_total.labels(result="error").inc()
+                scan_duration_seconds.labels(result="error").observe(time.time() - start_time)
+                logger.warning("Скан не дал данных: VL недоступен (%d неудачных запросов)", vl_failures)
+                return created
             self.last_scan = datetime.now(timezone.utc).isoformat(timespec="seconds")
             self.last_error = None
             last_scan_timestamp.set(time.time())

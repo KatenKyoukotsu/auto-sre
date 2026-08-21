@@ -295,6 +295,7 @@ async def api_health():
         "last_error": agent.last_error,
         "scan_interval_minutes": SCAN_INTERVAL_MINUTES,
         "model": agent.llm.model,
+        "llm": await agent.llm.status(),
         "vl_mode": type(agent.vl).__name__,
         "latest_finding": findings[0] if findings else None,
         "latest_blog_post": posts[0] if posts else None,

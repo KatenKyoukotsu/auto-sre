@@ -6,6 +6,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from openai import AsyncOpenAI
 
@@ -70,15 +71,21 @@ class CircuitBreakerState:
     failures: int = 0
     last_failure_time: float = 0
     open: bool = False
+    last_success_time: float = 0
+    last_error: str | None = None
 
     def record_success(self) -> None:
         self.failures = 0
         self.open = False
+        self.last_success_time = time.time()
+        self.last_error = None
         llm_circuit_breaker_state.set(0)
 
-    def record_failure(self) -> None:
+    def record_failure(self, error: str | None = None) -> None:
         self.failures += 1
         self.last_failure_time = time.time()
+        if error:
+            self.last_error = error
         if self.failures >= LLM_CIRCUIT_BREAKER_THRESHOLD:
             self.open = True
             llm_circuit_breaker_state.set(2)
@@ -96,12 +103,37 @@ class CircuitBreakerState:
         llm_circuit_breaker_state.set(2)
         return False
 
+    def state(self) -> str:
+        """ok — успехи; failing — были сбои, но breaker ещё открыт не стал; open — недоступна."""
+        if self.open:
+            return "open"
+        if self.failures > 0:
+            return "failing"
+        return "ok"
+
 
 class LlmClient:
+    PROBE_INTERVAL_SEC = 60
+
     def __init__(self, url: str = LITELLM_URL, api_key: str = LITELLM_API_KEY, model: str = LITELLM_MODEL):
         self.model = model
+        self.base_url = url.rstrip("/")
         self.client = AsyncOpenAI(base_url=f"{url}/v1", api_key=api_key, timeout=LLM_TIMEOUT)
         self._circuit = CircuitBreakerState()
+        self._probe_at = 0.0
+        self._reachable: bool | None = None
+
+    async def _probe(self) -> None:
+        """Дешёвая проверка живости LiteLLM, кэшируется на PROBE_INTERVAL_SEC."""
+        if time.time() - self._probe_at < self.PROBE_INTERVAL_SEC:
+            return
+        self._probe_at = time.time()
+        try:
+            resp = await self.client.get(f"{self.base_url}/v1/models")
+            self._reachable = resp.status_code < 500
+        except Exception as exc:
+            logger.debug("LLM probe failed: %s", exc)
+            self._reachable = False
 
     async def _complete_with_retry(self, system: str, user: str) -> str:
         if not self._circuit.can_proceed():
@@ -141,8 +173,24 @@ class LlmClient:
                     logger.info("Retrying LLM in %.1fs...", delay)
                     await asyncio.sleep(delay)
 
-        self._circuit.record_failure()
+        self._circuit.record_failure(error=str(last_error) if last_error else None)
         raise LlmError(f"LLM unavailable after {LLM_MAX_RETRIES} attempts: {last_error}") from last_error
+
+    async def status(self) -> dict:
+        """Состояние LLM для статус-бара: не просто имя модели, а живость."""
+        await self._probe()
+        last_ok = (
+            datetime.fromtimestamp(self._circuit.last_success_time, timezone.utc).isoformat(timespec="seconds")
+            if self._circuit.last_success_time
+            else None
+        )
+        return {
+            "model": self.model,
+            "state": self._circuit.state(),
+            "reachable": self._reachable,
+            "last_ok": last_ok,
+            "last_error": self._circuit.last_error,
+        }
 
     async def _complete(self, system: str, user: str) -> str:
         logger.info("LLM request: model=%s system=%s", self.model, _trunc(system, 250))

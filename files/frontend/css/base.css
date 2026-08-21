@@ -84,8 +84,21 @@ nav a.active { color: var(--accent); background: var(--panel-2); }
   box-shadow: 0 0 10px var(--low);
 }
 
+.status-dot.warn {
+  background: var(--medium);
+  box-shadow: 0 0 10px var(--medium);
+}
+
 .status-meta { color: var(--muted); font-size: 13px; }
 .error-line { color: var(--critical); margin-top: 4px; }
+
+.poll-error {
+  border: 1px solid var(--critical);
+  border-radius: 10px;
+  color: var(--critical);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
 
 .fullscan {
   background: var(--panel);

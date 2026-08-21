@@ -1,25 +1,29 @@
 // Единственная точка обращения к API sre-agent.
 
-async function json(resp) {
+const TIMEOUT_MS = 10000;
+
+async function request(url, opts = {}) {
+  // без таймаута зависший запрос оставит скелетоны навсегда
+  const resp = await fetch(url, { ...opts, signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
 }
 
 export const api = {
-  getHealth: () => fetch('/api/health').then(json),
+  getHealth: () => request('/api/health'),
 
-  getFindings: (limit = 100) => fetch(`/api/findings?limit=${limit}`).then(json),
-  ackFinding: (id) => fetch(`/api/findings/${id}/ack`, { method: 'POST' }).then(json),
+  getFindings: (limit = 100) => request(`/api/findings?limit=${limit}`),
+  ackFinding: (id) => request(`/api/findings/${id}/ack`, { method: 'POST' }),
 
-  triggerScan: () => fetch('/api/trigger/scan', { method: 'POST' }).then(json),
+  triggerScan: () => request('/api/trigger/scan', { method: 'POST' }),
   triggerFullScan: (start, end) =>
-    fetch('/api/trigger/full-scan', {
+    request('/api/trigger/full-scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ start, end }),
-    }).then(json),
+    }),
 
-  getBlogPosts: (limit = 30) => fetch(`/api/blog?limit=${limit}`).then(json),
-  getBlogStatus: () => fetch('/api/blog/status').then(json),
-  triggerBlog: () => fetch('/api/trigger/blog', { method: 'POST' }).then(json),
+  getBlogPosts: (limit = 30) => request(`/api/blog?limit=${limit}`),
+  getBlogStatus: () => request('/api/blog/status'),
+  triggerBlog: () => request('/api/trigger/blog', { method: 'POST' }),
 };
