@@ -1,24 +1,24 @@
-# Deployment Guide — Auto SRE
+# Руководство по развёртыванию — Auto SRE
 
-## Prerequisites
+## Требования
 
-### Infrastructure
-- **Docker** 24+ and **Docker Compose** 2.20+
-- **Ansible** 2.14+ (for production deploy)
-- **PostgreSQL** 16 (via container)
-- **Kafka** 7.6+ KRaft mode (via container)
-- **Victoria Logs** — external, accessible via HTTP
-- **LiteLLM** — external, OpenAI-compatible endpoint
+### Инфраструктура
+- **Docker** 24+ и **Docker Compose** 2.20+
+- **Ansible** 2.14+ (для деплоя на прод)
+- **PostgreSQL** 16 (в контейнере)
+- **Kafka** 7.6+ в режиме KRaft (в контейнере)
+- **Victoria Logs** — внешний, доступен по HTTP
+- **LiteLLM** — внешний, OpenAI-совместимый эндпоинт
 
-### Network
-- Ports: `8096` (sre-agent), `8097` (alert-analyzer), `5432` (PostgreSQL), `9092` (Kafka)
-- Internal Docker network: `auto-sre-net`
+### Сеть
+- Порты: `8096` (sre-agent), `8097` (alert-analyzer), `5432` (PostgreSQL), `9092` (Kafka)
+- Внутренняя Docker-сеть: `auto-sre-net`
 
 ---
 
-## Production Deployment (Ansible)
+## Прод-развёртывание (Ansible)
 
-### Inventory Setup
+### Настройка inventory
 
 ```ini
 # inventory/all-01-prod/hosts.yml
@@ -46,7 +46,7 @@ all:
         auto_sre_tz: "Europe/Moscow"
 ```
 
-### Vault Secrets
+### Секреты в Vault
 
 ```bash
 ansible-vault create group_vars/all/vault.yml
@@ -59,36 +59,36 @@ vault_postgres_password: "super-secret-postgres-password"
 vault_auth_password: "super-secret-auth-password"
 ```
 
-### Deploy
+### Деплой
 
 ```bash
-# Full deploy
+# Полный деплой
 ansible-playbook -i inventory/all-01-prod auto-sre.yaml --ask-vault-pass
 
-# Dry run
+# Пробный прогон без изменений
 ansible-playbook -i inventory/all-01-prod auto-sre.yaml --check --ask-vault-pass
 ```
 
-### What Ansible Does
+### Что делает Ansible
 
-1. Creates `/opt/data/auto-sre/` and `/opt/docker/auto-sre/`
-2. Copies source files to `/opt/docker/auto-sre/`
-3. Renders `.env` from `templates/env.j2`
-4. Renders `docker-compose.yml` from `templates/docker-compose.yml.j2`
-4. Runs `docker compose down --remove-orphans`
-5. Runs `docker compose up -d --build`
+1. Создаёт `/opt/data/auto-sre/` и `/opt/docker/auto-sre/`
+2. Копирует исходники в `/opt/docker/auto-sre/`
+3. Рендерит `.env` из `templates/env.j2`
+4. Рендерит `docker-compose.yml` из `templates/docker-compose.yml.j2`
+4. Выполняет `docker compose down --remove-orphans`
+5. Выполняет `docker compose up -d --build`
 
 ---
 
-## Local Development
+## Локальная разработка
 
-### Quick Start
+### Быстрый старт
 
 ```bash
-# Clone and enter
+# Перейти в каталог проекта
 cd auto-sre
 
-# Render compose (uses .env in current dir)
+# Подготовить .env (compose подхватит его из текущего каталога)
 cat > .env <<'EOF'
 VL_URL=http://host.docker.internal:9428
 VL_USERNAME=admin
@@ -104,38 +104,38 @@ AUTH_ENABLED=false
 LOG_LEVEL=DEBUG
 EOF
 
-# Start dev stack (with test containers)
+# Поднять dev-стек (с тестовыми контейнерами)
 docker compose -f docker-compose.dev.yml up -d --build
 
-# View logs
+# Смотреть логи
 docker compose -f docker-compose.dev.yml logs -f sre-agent
 ```
 
-### Dev Compose Features
+### Возможности dev-compose
 
-`docker-compose.dev.yml` includes:
-- **Testcontainers** for PostgreSQL/Kafka (ephemeral)
-- **Hot reload** via volume mounts
-- **Debug ports** exposed
-- **Resource limits** for local machine
+`docker-compose.dev.yml` включает:
+- **Тестовые контейнеры** PostgreSQL/Kafka (эфемерные)
+- **Hot reload** через volume-маунты
+- **Отладочные порты**
+- **Лимиты ресурсов** под локальную машину
 
 ---
 
-## Configuration Reference
+## Справочник конфигурации
 
-All config via environment variables (in `.env` or Ansible inventory):
+Вся конфигурация через переменные окружения (в `.env` или Ansible inventory):
 
-### Required
-| Variable | Description |
+### Обязательные
+| Переменная | Описание |
 |----------|-------------|
-| `VL_URL` | Victoria Logs endpoint |
-| `VL_PASSWORD` | VL auth password |
-| `LITELLM_URL` | LiteLLM endpoint |
-| `LITELLM_API_KEY` | LiteLLM API key |
-| `POSTGRES_PASSWORD` | PostgreSQL password |
-| `AUTH_PASSWORD` | Basic Auth password |
+| `VL_URL` | Эндпоинт Victoria Logs |
+| `VL_PASSWORD` | Пароль к VL |
+| `LITELLM_URL` | Эндпоинт LiteLLM |
+| `LITELLM_API_KEY` | API-ключ LiteLLM |
+| `POSTGRES_PASSWORD` | Пароль PostgreSQL |
+| `AUTH_PASSWORD` | Пароль Basic Auth |
 
-### Optional (with defaults)
+### Опциональные (со значениями по умолчанию)
 ```bash
 # Victoria Logs
 VL_URL=http://10.148.14.12:9428
@@ -171,13 +171,13 @@ POSTGRES_DB=auto_sre
 POSTGRES_USER=auto_sre
 POSTGRES_PASSWORD=auto_sre
 
-# Scheduling
+# Планирование
 SCAN_INTERVAL_MINUTES=15
 BLOG_HOUR=7
 BLOG_MINUTE=30
 TZ=Europe/Moscow
 
-# Detection
+# Детекция
 ERROR_PATTERN="i(error*) OR i(exception*) OR i(panic*) OR i(fatal*) OR i(traceback*)"
 HISTORY_HOURS=6
 WINDOW_MINUTES=15
@@ -194,37 +194,37 @@ ALERT_BATCH_MAX=20
 ALERT_DEDUP_WINDOW=3600
 FLUSH_INTERVAL=60
 
-# Auth
+# Аутентификация
 AUTH_ENABLED=true
 AUTH_USERNAME=admin
 AUTH_PASSWORD=changeme
 
-# Other
+# Прочее
 LOG_LEVEL=INFO
 SHUTDOWN_TIMEOUT=30
 ```
 
 ---
 
-## Post-Deploy Verification
+## Проверка после деплоя
 
-### Health Checks
+### Проверки здоровья
 ```bash
 # sre-agent
-curl http://<host>:8096/api/health
-curl -u admin:password http://<host>:8096/api/findings
+curl http://<хост>:8096/api/health
+curl -u admin:password http://<хост>:8096/api/findings
 
 # alert-analyzer
-curl http://<host>:8097/api/health
+curl http://<хост>:8097/api/health
 
-# Metrics
-curl http://<host>:8096/metrics
-curl http://<host>:8097/metrics
+# Метрики
+curl http://<хост>:8096/metrics
+curl http://<хост>:8097/metrics
 ```
 
-### Test Alert Webhook
+### Тест вебхука алерта
 ```bash
-curl -X POST http://<host>:8097/webhook \
+curl -X POST http://<хост>:8097/webhook \
   -u admin:password \
   -H "Content-Type: application/json" \
   -d '{
@@ -246,7 +246,7 @@ curl -X POST http://<host>:8097/webhook \
   }'
 ```
 
-### Check Logs
+### Просмотр логов
 ```bash
 docker compose logs -f sre-agent
 docker compose logs -f alert-analyzer
@@ -256,9 +256,9 @@ docker compose logs -f kafka
 
 ---
 
-## Monitoring Setup
+## Настройка мониторинга
 
-### Prometheus Scrape Config
+### Конфигурация scrape для Prometheus
 
 ```yaml
 scrape_configs:
@@ -267,17 +267,17 @@ scrape_configs:
       - targets: ['sre-host:8096', 'sre-host:8097']
 ```
 
-### Grafana Dashboards
+### Дашборды Grafana
 
-Import from `docs/dashboards/` (to be created):
-- `auto-sre-overview.json` — Service health, scan rate, findings
-- `auto-sre-kafka.json` — Consumer lag, outbox queue
-- `auto-sre-llm.json` — LLM latency, tokens, errors
-- `auto-sre-alerts.json` — Alert throughput, analysis latency
+Импортировать из `docs/dashboards/` (пока не созданы):
+- `auto-sre-overview.json` — здоровье сервисов, частота сканов, находки
+- `auto-sre-kafka.json` — лаг консюмера, очередь outbox
+- `auto-sre-llm.json` — задержка LLM, токены, ошибки
+- `auto-sre-alerts.json` — поток алертов, задержка анализа
 
-### Alert Rules
+### Правила алертинга
 
-Already defined in `files/sre-agent/alerting/auto-sre-rules.yaml`. Apply to Prometheus:
+Уже определены в `files/sre-agent/alerting/auto-sre-rules.yaml`. Подключить к Prometheus:
 
 ```yaml
 rule_files:
@@ -286,111 +286,111 @@ rule_files:
 
 ---
 
-## Backup & Restore
+## Резервное копирование и восстановление
 
-### PostgreSQL Backup
+### Бэкап PostgreSQL
 ```bash
-# Backup
+# Бэкап
 docker exec auto-sre-postgres pg_dump -U auto_sre auto_sre > backup_$(date +%F).sql
 
-# Restore
+# Восстановление
 cat backup_2025-01-21.sql | docker exec -i auto-sre-postgres psql -U auto_sre auto_sre
 ```
 
-### Kafka Backup
+### Бэкап Kafka
 ```bash
-# Topics are replicated; backup not typically needed
-# For disaster recovery: mirror to another cluster
+# Топики реплицированы; бэкап обычно не требуется
+# Для disaster recovery: зеркало на другой кластер
 ```
 
-### Volume Backup
+### Бэкап томов
 ```bash
-# PostgreSQL data
+# Данные PostgreSQL
 tar -czf pg_backup_$(date +%F).tar.gz /opt/data/auto-sre/postgres
 
-# Kafka data
+# Данные Kafka
 tar -czf kafka_backup_$(date +%F).tar.gz /opt/data/auto-sre/kafka
 ```
 
 ---
 
-## Troubleshooting
+## Устранение неполадок
 
-### Common Issues
+### Частые проблемы
 
-| Symptom | Cause | Fix |
+| Симптом | Причина | Решение |
 |---------|-------|-----|
-| `auto_sre_up = 0` | Container crashed | `docker compose logs sre-agent` |
-| Scan not running | APScheduler not started | Check logs for scheduler errors |
-| High Kafka lag | Consumer slow | Scale consumer, check LLM latency |
-| VL circuit breaker open | VL unreachable | Check VL URL, network, credentials |
-| LLM circuit breaker open | LLM timeout | Increase `LLM_TIMEOUT`, check LiteLLM |
-| DB pool exhausted | Too many connections | Increase `pool_size`, check leaks |
+| `auto_sre_up = 0` | Контейнер упал | `docker compose logs sre-agent` |
+| Скан не запускается | APScheduler не стартовал | Проверить логи на ошибки планировщика |
+| Высокий лаг Kafka | Медленный консюмер | Масштабировать консюмера, проверить задержку LLM |
+| VL circuit breaker открыт | VL недоступен | Проверить URL VL, сеть, креды |
+| LLM circuit breaker открыт | Таймаут LLM | Увеличить `LLM_TIMEOUT`, проверить LiteLLM |
+| Пул БД исчерпан | Слишком много соединений | Увеличить `pool_size`, проверить утечки |
 
-### Debug Commands
+### Отладочные команды
 ```bash
-# Enter container
+# Зайти в контейнер
 docker exec -it auto-sre-agent bash
 
-# Check DB
+# Проверить БД
 docker exec -it auto-sre-postgres psql -U auto_sre -d auto_sre
 
-# Check Kafka
+# Проверить Kafka
 docker exec -it auto-sre-kafka kafka-topics --bootstrap-server localhost:9092 --list
 docker exec -it auto-sre-kafka kafka-consumer-groups --bootstrap-server localhost:9092 --describe --group auto-sre-worker
 
-# Check metrics
+# Проверить метрики
 curl -s http://localhost:8096/metrics | grep auto_sre
 ```
 
 ---
 
-## Upgrading
+## Обновление
 
-### Rolling Update
+### Rolling update
 ```bash
-# Pull latest images
+# Забрать свежие образы
 docker compose pull
 
-# Rebuild and restart
+# Пересобрать и перезапустить
 docker compose up -d --build
 
-# Verify
+# Проверить
 curl http://localhost:8096/api/health
 ```
 
-### Database Migrations
-- Schema changes via `Base.metadata.create_all()` on startup
-- For production: use Alembic migrations (see `files/sre-agent/migrations/`)
+### Миграции базы данных
+- Изменения схемы через `Base.metadata.create_all()` при старте
+- Для прода: миграции Alembic (см. `files/sre-agent/migrations/`)
 
-### Rollback
+### Откат
 ```bash
-# Previous image tag
+# Предыдущий тег образа
 docker compose down
-docker compose up -d --build  # with previous image tag
+docker compose up -d --build  # с предыдущим тегом образа
 ```
 
 ---
 
-## Security Hardening
+## Укрепление безопасности
 
-### Production Checklist
-- [ ] Change all default passwords
-- [ ] Enable `AUTH_ENABLED=true`
-- [ ] Configure TLS for PostgreSQL (`sslmode=require`)
-- [ ] Configure TLS for Kafka (`SSL` listener)
-- [ ] Configure TLS for Victoria Logs (HTTPS)
-- [ ] Restrict network access (firewall/security groups)
-- [ ] Enable audit logging
-- [ ] Rotate secrets regularly (Ansible Vault)
-- [ ] Set up log aggregation (Loki/ELK)
-- [ ] Configure alerting on-call rotation
+### Чек-лист для прода
+- [ ] Сменить все пароли по умолчанию
+- [ ] Включить `AUTH_ENABLED=true`
+- [ ] Настроить TLS для PostgreSQL (`sslmode=require`)
+- [ ] Настроить TLS для Kafka (SSL-листенер)
+- [ ] Настроить TLS для Victoria Logs (HTTPS)
+- [ ] Ограничить сетевой доступ (фаервол/security groups)
+- [ ] Включить аудит-логирование
+- [ ] Регулярно ротировать секреты (Ansible Vault)
+- [ ] Настроить агрегацию логов (Loki/ELK)
+- [ ] Настроить алертинг с графиком дежурств
 
-### Secrets Management
+### Управление секретами
 ```bash
-# Rotate passwords
+# Ротация паролей
 ansible-vault edit group_vars/all/vault.yml
 
-# Re-deploy
+# Повторный деплой
 ansible-playbook -i inventory/all-01-prod auto-sre.yaml --ask-vault-pass
 ```

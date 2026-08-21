@@ -1,33 +1,33 @@
-# Auto SRE — Architecture Documentation
+# Auto SRE — Архитектурная документация
 
-## System Overview
+## Обзор системы
 
-Auto SRE is a dual-purpose observability platform:
-1. **Log Anomaly Detection** — Scans Victoria Logs for error spikes, analyzes with LLM
-2. **Alert Analysis** — Consumes Alertmanager webhooks, correlates alerts with LLM
+Auto SRE — платформа наблюдаемости двойного назначения:
+1. **Детекция аномалий в логах** — сканирует Victoria Logs на предмет всплесков ошибок, анализирует с помощью LLM
+2. **Анализ алертов** — принимает вебхуки Alertmanager, коррелирует алерты с помощью LLM
 
 ---
 
-## Component Diagram
+## Диаграмма компонентов
 
 ```mermaid
 flowchart TB
-    subgraph platform ["AUTO SRE PLATFORM"]
+    subgraph platform ["ПЛАТФОРМА AUTO SRE"]
         direction TB
 
-        VL[("Victoria Logs<br/>direct HTTP")]
+        VL[("Victoria Logs<br/>прямой HTTP")]
 
         subgraph sreagent ["sre-agent"]
             direction LR
-            SCANNER["Scanner<br/>(APScheduler)"]
+            SCANNER["Сканер<br/>(APScheduler)"]
             REST["REST API"]
-            BLOGGEN["Blog Generator"]
+            BLOGGEN["Генератор блога"]
         end
 
         PG[("PostgreSQL<br/>findings · blog_posts · outbox_events")]
-        OUTBOX["Outbox Poller<br/>(5s interval)"]
-        KAFKA["Kafka<br/>(3 topics)"]
-        CONSUMER["Kafka Consumer<br/>(LLM analysis)"]
+        OUTBOX["Outbox-поллер<br/>(интервал 5с)"]
+        KAFKA["Kafka<br/>(3 топика)"]
+        CONSUMER["Kafka-консюмер<br/>(LLM-анализ)"]
 
         VL --> SCANNER
         SCANNER --> PG
@@ -40,75 +40,75 @@ flowchart TB
 
         subgraph alertanalyzer ["alert-analyzer"]
             direction LR
-            WH["Webhook Receiver"] --> BATCHER["AlertBatcher<br/>(time + size)"]
-            BATCHER --> LLMA["LLM analysis"]
+            WH["Приём вебхуков"] --> BATCHER["AlertBatcher<br/>(время + размер)"]
+            BATCHER --> LLMA["LLM-анализ"]
             LLMA --> APG[("PostgreSQL<br/>alert_analysis")]
         end
 
-        WH -.-> ALERTS["Kafka<br/>(alerts)"]
+        WH -.-> ALERTS["Kafka<br/>(алерты)"]
         BATCHER -.-> ALERTS
     end
 ```
 
 ---
 
-## Data Flow
+## Потоки данных
 
-### 1. Log Anomaly Detection (sre-agent)
+### 1. Детекция аномалий в логах (sre-agent)
 
 ```mermaid
 flowchart TD
-    T["Every SCAN_INTERVAL_MINUTES (default 15 min)"]
-    T --> A["1. Get active streams from VL (last 15 min)"]
-    A --> B["2. For each stream (max 8):<br/>a. query error count history (6h / 15 min windows)<br/>b. compute baseline (mean / std)<br/>c. check current window vs baseline"]
-    B --> C{"d. spike?"}
-    C -- yes --> D["fetch samples, send to LLM"]
-    C -- no --> E
-    D --> E["3. Deduplicate by service (60 min window)"]
-    E --> F["4. Store finding + outbox event (single transaction)"]
-    F --> G["5. Outbox poller → Kafka (findings topic)"]
-    G --> H["6. Consumer picks up → LLM analysis → update finding"]
+    T["Каждые SCAN_INTERVAL_MINUTES (по умолчанию 15 мин)"]
+    T --> A["1. Получить активные стримы из VL (за последние 15 мин)"]
+    A --> B["2. Для каждого стрима (макс. 8):<br/>a. запросить историю количества ошибок (окна 6ч / 15 мин)<br/>b. вычислить базовую линию (среднее / std)<br/>c. сравнить текущее окно с базовой линией"]
+    B --> C{"d. всплеск?"}
+    C -- да --> D["получить сэмплы, отправить в LLM"]
+    C -- нет --> E
+    D --> E["3. Дедупликация по сервису (окно 60 мин)"]
+    E --> F["4. Сохранить находку + outbox-событие (одна транзакция)"]
+    F --> G["5. Outbox-поллер → Kafka (топик findings)"]
+    G --> H["6. Консюмер забирает → LLM-анализ → обновление находки"]
 ```
 
-**Spike Detection Formula**:
+**Формула детекции всплеска**:
 ```
 threshold = max(mean + 3*std, 2*mean)
 is_spike = current > threshold AND current >= 20
 ```
 
-### 2. Blog Generation (sre-agent)
+### 2. Генерация блога (sre-agent)
 
 ```mermaid
 flowchart TD
-    T["Daily at 07:30 (Europe/Moscow)"]
-    T --> A["1. Fetch findings from last 24h"]
-    A --> B["2. Build digest (count, summaries)"]
-    B --> C["3. Send to LLM with blog prompt"]
-    C --> D["4. Store blog post in PostgreSQL"]
+    T["Ежедневно в 07:30 (Europe/Moscow)"]
+    T --> A["1. Получить находки за последние 24ч"]
+    A --> B["2. Собрать дайджест (количество, краткие описания)"]
+    B --> C["3. Отправить в LLM с промптом для блога"]
+    C --> D["4. Сохранить пост в PostgreSQL"]
 ```
 
-### 3. Alert Analysis (alert-analyzer)
+### 3. Анализ алертов (alert-analyzer)
 
 ```mermaid
 flowchart TD
-    W["Alertmanager webhook → /webhook"]
-    W --> A["1. Validate Basic Auth (optional)"]
-    A --> B["2. Parse AlertmanagerPayload (Pydantic)"]
-    B --> C["3. For each alert:<br/>a. deduplicate by fingerprint (1h window)<br/>b. group by (alertname, severity, cluster, ns, service)<br/>c. add to AlertBatcher (time window 5 min, max 20)"]
-    C --> D{"4. Batch ready?"}
-    D -- yes --> E["LLM analysis"]
-    D -- "periodic flush (60s)" --> E
-    E --> F["5. Store alert_analysis per fingerprint"]
+    W["Вебхук Alertmanager → /webhook"]
+    W --> A["1. Проверка Basic Auth (опционально)"]
+    A --> B["2. Разбор AlertmanagerPayload (Pydantic)"]
+    B --> C["3. Для каждого алерта:<br/>a. дедупликация по фингерпринту (окно 1ч)<br/>b. группировка по (alertname, severity, cluster, ns, service)<br/>c. добавление в AlertBatcher (временное окно 5 мин, макс. 20)"]
+    C --> D{"4. Батч готов?"}
+    D -- да --> E["LLM-анализ"]
+    D -- "периодический flush (60с)" --> E
+    E --> F["5. Сохранить alert_analysis по каждому фингерпринту"]
 ```
 
 ---
 
-## Database Schema
+## Схема базы данных
 
-### PostgreSQL Tables
+### Таблицы PostgreSQL
 
 ```sql
--- Core findings from log scanning
+-- Основные находки из сканирования логов
 CREATE TABLE findings (
     id              SERIAL PRIMARY KEY,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -126,7 +126,7 @@ CREATE TABLE findings (
 CREATE INDEX idx_findings_created ON findings(created_at DESC);
 CREATE INDEX idx_findings_service ON findings(service);
 
--- Blog posts
+-- Посты блога
 CREATE TABLE blog_posts (
     id          SERIAL PRIMARY KEY,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -136,7 +136,7 @@ CREATE TABLE blog_posts (
 
 CREATE INDEX idx_blog_created ON blog_posts(created_at DESC);
 
--- Transactional outbox for Kafka
+-- Транзакционный outbox для Kafka
 CREATE TABLE outbox_events (
     id            SERIAL PRIMARY KEY,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -150,7 +150,7 @@ CREATE TABLE outbox_events (
 
 CREATE INDEX idx_outbox_unprocessed ON outbox_events(processed_at, created_at);
 
--- Alert analysis (alert-analyzer)
+-- Анализ алертов (alert-analyzer)
 CREATE TABLE alert_analysis (
     id              SERIAL PRIMARY KEY,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -161,10 +161,10 @@ CREATE TABLE alert_analysis (
     namespace       VARCHAR(255),
     service         VARCHAR(255),
     status          VARCHAR(20) NOT NULL,  -- firing, resolved
-    correlated_group TEXT,  -- JSON array of fingerprints
+    correlated_group TEXT,  -- JSON-массив фингерпринтов
     root_cause      TEXT,
     suggested_actions TEXT,
-    confidence      TEXT,  -- JSON with scores
+    confidence      TEXT,  -- JSON со скорами
     raw_alerts      TEXT NOT NULL,  -- JSON
     llm_model       VARCHAR(100)
 );
@@ -177,62 +177,62 @@ CREATE INDEX idx_alert_analysis_status ON alert_analysis(status);
 
 ---
 
-## Kafka Topics
+## Топики Kafka
 
-| Topic | Partitions | Retention | Producer | Consumer |
+| Топик | Партиции | Хранение | Продюсер | Консюмер |
 |-------|------------|-----------|----------|----------|
-| `auto-sre.findings` | 1 | 168h | sre-agent (outbox) | sre-agent consumer |
-| `auto-sre.blog` | 1 | 168h | sre-agent (outbox) | sre-agent consumer |
-| `auto-sre.scan-events` | 1 | 168h | sre-agent (outbox) | sre-agent consumer |
-| `auto-sre.alerts` | 1 | 168h | alert-analyzer (webhook) | *future* |
+| `auto-sre.findings` | 1 | 168ч | sre-agent (outbox) | консюмер sre-agent |
+| `auto-sre.blog` | 1 | 168ч | sre-agent (outbox) | консюмер sre-agent |
+| `auto-sre.scan-events` | 1 | 168ч | sre-agent (outbox) | консюмер sre-agent |
+| `auto-sre.alerts` | 1 | 168ч | alert-analyzer (вебхук) | *в будущем* |
 
-**Producer Config**: `acks=all`, `enable_idempotence=true`, `compression_type=snappy`
-
----
-
-## Services
-
-### sre-agent (port 8096)
-
-| Endpoint | Auth | Description |
-|--------|------|-------------|
-| `GET /` | Basic | Anomaly wall UI |
-| `GET /blog` | Basic | Blog digest UI |
-| `GET /api/findings` | Basic | List findings |
-| `GET /api/findings/{id}` | Basic | Single finding |
-| `POST /api/findings/{id}/ack` | Basic | Acknowledge finding |
-| `GET /api/blog` | Basic | List blog posts |
-| `GET /api/blog/status` | Basic | Blog generation status |
-| `POST /api/trigger/scan` | Basic | Manual scan |
-| `POST /api/trigger/full-scan` | Basic | Full historical scan |
-| `POST /api/trigger/blog` | Basic | Manual blog generation |
-| `GET /api/health` | None | Health check |
-| `GET /metrics` | None | Prometheus metrics |
-
-**Background Jobs**:
-- `scan_job` — Interval (15min): runs `Agent.scan()`
-- `daily_blog` — Cron (07:30 MSK): runs `Agent.generate_daily_blog()`
-
-### alert-analyzer (port 8097)
-
-| Endpoint | Auth | Description |
-|--------|------|-------------|
-| `POST /webhook` | Basic* | Alertmanager webhook |
-| `POST /webhook/test` | Basic* | Test webhook |
-| `GET /api/analyses` | Basic | List alert analyses |
-| `GET /api/analyses/{id}` | Basic | Single analysis |
-| `GET /api/stats` | Basic | Buffer stats, config |
-| `POST /api/flush` | Basic | Manual flush |
-| `GET /api/health` | None | Health check |
-| `GET /metrics` | None | Prometheus metrics |
-
-*Optional: `AUTH_ENABLED=false` disables auth*
+**Конфигурация продюсера**: `acks=all`, `enable_idempotence=true`, `compression_type=snappy`
 
 ---
 
-## Configuration
+## Сервисы
 
-All via environment variables (rendered from `templates/env.j2` by Ansible):
+### sre-agent (порт 8096)
+
+| Эндпоинт | Auth | Описание |
+|--------|------|-------------|
+| `GET /` | Basic | UI стены аномалий |
+| `GET /blog` | Basic | UI дайджеста блога |
+| `GET /api/findings` | Basic | Список находок |
+| `GET /api/findings/{id}` | Basic | Одна находка |
+| `POST /api/findings/{id}/ack` | Basic | Подтверждение (ack) находки |
+| `GET /api/blog` | Basic | Список постов блога |
+| `GET /api/blog/status` | Basic | Статус генерации блога |
+| `POST /api/trigger/scan` | Basic | Ручной скан |
+| `POST /api/trigger/full-scan` | Basic | Полный исторический скан |
+| `POST /api/trigger/blog` | Basic | Ручная генерация блога |
+| `GET /api/health` | Нет | Проверка здоровья |
+| `GET /metrics` | Нет | Метрики Prometheus |
+
+**Фоновые задачи**:
+- `scan_job` — интервал (15 мин): запускает `Agent.scan()`
+- `daily_blog` — cron (07:30 MSK): запускает `Agent.generate_daily_blog()`
+
+### alert-analyzer (порт 8097)
+
+| Эндпоинт | Auth | Описание |
+|--------|------|-------------|
+| `POST /webhook` | Basic* | Вебхук Alertmanager |
+| `POST /webhook/test` | Basic* | Тестовый вебхук |
+| `GET /api/analyses` | Basic | Список анализов алертов |
+| `GET /api/analyses/{id}` | Basic | Один анализ |
+| `GET /api/stats` | Basic | Статистика буфера, конфигурация |
+| `POST /api/flush` | Basic | Ручной flush |
+| `GET /api/health` | Нет | Проверка здоровья |
+| `GET /metrics` | Нет | Метрики Prometheus |
+
+*Опционально: `AUTH_ENABLED=false` отключает аутентификацию*
+
+---
+
+## Конфигурация
+
+Всё через переменные окружения (рендерятся из `templates/env.j2` средствами Ansible):
 
 ### Victoria Logs
 ```bash
@@ -278,7 +278,7 @@ POSTGRES_PASSWORD=${auto_sre_postgres_password}
 DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
 ```
 
-### Scheduling
+### Планирование
 ```bash
 SCAN_INTERVAL_MINUTES=15
 BLOG_HOUR=7
@@ -303,14 +303,14 @@ ALERT_DEDUP_WINDOW=3600
 FLUSH_INTERVAL=60
 ```
 
-### Auth
+### Аутентификация
 ```bash
 AUTH_ENABLED=true
 AUTH_USERNAME=admin
 AUTH_PASSWORD=${auto_sre_auth_password}
 ```
 
-### Other
+### Прочее
 ```bash
 LOG_LEVEL=INFO
 SHUTDOWN_TIMEOUT=30
@@ -318,38 +318,38 @@ SHUTDOWN_TIMEOUT=30
 
 ---
 
-## Deployment
+## Развёртывание
 
-### Production (Ansible)
+### Прод (Ansible)
 ```bash
 ansible-playbook -i inventory/all-01-prod auto-sre.yaml
 ```
 
-Deploys to `/opt/docker/auto-sre/` with:
-- `docker-compose.yml` (rendered from template)
-- `.env` (rendered from template)
-- PostgreSQL data: `/opt/data/auto-sre/postgres`
-- Kafka data: `/opt/data/auto-sre/kafka`
+Разворачивает в `/opt/docker/auto-sre/`:
+- `docker-compose.yml` (рендерится из шаблона)
+- `.env` (рендерится из шаблона)
+- Данные PostgreSQL: `/opt/data/auto-sre/postgres`
+- Данные Kafka: `/opt/data/auto-sre/kafka`
 
-### Local Development
+### Локальная разработка
 
 ```bash
-# Production-like stack
+# Прод-подобный стек
 cd /opt/docker/auto-sre
 docker compose up -d --build
 
-# Development stack (with test containers)
+# Дев-стек (с тестовыми контейнерами)
 cd /opt/docker/auto-sre
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
 ---
 
-## Monitoring
+## Мониторинг
 
-### Key Metrics to Alert On
+### Ключевые метрики для алертинга
 
-| Metric | Warning | Critical |
+| Метрика | Предупреждение | Критический |
 |--------|---------|----------|
 | `auto_sre_up` | < 1 | < 1 |
 | `auto_sre_last_scan_error` | = 1 | = 1 |
@@ -360,51 +360,51 @@ docker compose -f docker-compose.dev.yml up -d --build
 | `auto_sre_db_pool_checked_out / auto_sre_db_pool_size` | > 0.8 | > 0.95 |
 | `auto_sre_http_requests_total{status=~"5.."}` | rate > 0.05 | rate > 0.1 |
 
-### Prometheus Rules
+### Правила Prometheus
 
-See `files/sre-agent/alerting/auto-sre-rules.yaml` for 25+ pre-defined rules.
-
----
-
-## Security
-
-- **Basic Auth** on all endpoints except `/api/health`, `/metrics`, `/static/*`
-- **Credentials** via Ansible inventory (not in repo)
-- **Network**: Bridge network `auto-sre-net`, no external exposure except sre-agent:8096
-- **TLS**: Not configured in compose (add for production)
+См. `files/sre-agent/alerting/auto-sre-rules.yaml` — более 25 готовых правил.
 
 ---
 
-## Scaling Considerations
+## Безопасность
 
-| Component | Current | Scaling Strategy |
+- **Basic Auth** на всех эндпоинтах, кроме `/api/health`, `/metrics`, `/static/*`
+- **Учётные данные** через Ansible inventory (не в репозитории)
+- **Сеть**: bridge-сеть `auto-sre-net`, без внешнего доступа, кроме sre-agent:8096
+- **TLS**: не настроен в compose (добавьте для прода)
+
+---
+
+## Масштабирование
+
+| Компонент | Сейчас | Стратегия масштабирования |
 |-----------|---------|------------------|
-| sre-agent API | 1 replica | Horizontal (stateless) |
-| sre-agent scanner | 1 instance | Single (APScheduler) |
-| Kafka consumer | 1 instance | Partition by finding key |
-| alert-analyzer | 1 instance | Horizontal (stateless webhook) |
-| PostgreSQL | 1 instance | Read replicas for queries |
-| Kafka | 1 broker (KRaft) | Add brokers, increase partitions |
+| sre-agent API | 1 replica | Горизонтальное (stateless) |
+| sre-agent scanner | 1 instance | Один экземпляр (APScheduler) |
+| Kafka consumer | 1 instance | Партиционирование по ключу находки |
+| alert-analyzer | 1 instance | Горизонтальное (stateless-вебхук) |
+| PostgreSQL | 1 instance | Read-реплики для запросов |
+| Kafka | 1 broker (KRaft) | Добавить брокеров, увеличить число партиций |
 
 ---
 
-## Failure Modes
+## Сценарии отказов
 
-| Failure | Detection | Recovery |
+| Отказ | Детекция | Восстановление |
 |---------|-----------|----------|
-| VL unreachable | Circuit breaker open | Auto-retry after timeout |
-| LLM unavailable | Circuit breaker open | Skip analysis, store raw |
-| Kafka down | Producer errors | Outbox retains events |
-| PostgreSQL down | Health check fail | Auto-reconnect |
-| Scanner crash | No scans | `/api/health` shows stale |
+| VL недоступен | Circuit breaker открыт | Автоповтор после таймаута |
+| LLM недоступен | Circuit breaker открыт | Пропустить анализ, сохранить сырые данные |
+| Kafka лежит | Ошибки продюсера | Outbox сохраняет события |
+| PostgreSQL лежит | Провал проверки здоровья | Автопереподключение |
+| Падение сканера | Нет сканов | `/api/health` показывает устаревшие данные |
 
 ---
 
-## Future Enhancements
+## Планы развития
 
-1. **Multi-tenant support** — namespace isolation
-2. **Alert correlation ML** — replace LLM with trained model
-3. **Dashboard** — Grafana dashboards for findings/alerts
-4. **Notification** — Slack/Telegram/PagerDuty integration
-5. **Historical trends** — Seasonal baseline adjustment
-6. **Runbook linking** — Auto-attach runbooks to findings
+1. **Мультиарендность** — изоляция по namespace
+2. **ML для корреляции алертов** — заменить LLM обученной моделью
+3. **Дашборды** — Grafana-дашборды для находок/алертов
+4. **Уведомления** — интеграция со Slack/Telegram/PagerDuty
+5. **Исторические тренды** — сезонная корректировка базовой линии
+6. **Привязка runbook'ов** — автоматическое прикрепление runbook'ов к находкам

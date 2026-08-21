@@ -1,23 +1,23 @@
-# API Reference — Auto SRE
+# Справочник API — Auto SRE
 
-## Base URLs
+## Базовые URL
 
-| Environment | sre-agent | alert-analyzer |
+| Окружение | sre-agent | alert-analyzer |
 |-------------|-----------|----------------|
-| Production | `http://<host>:8096` | `http://<host>:8097` |
-| Development | `http://localhost:8096` | `http://localhost:8097` |
+| Продакшен | `http://<host>:8096` | `http://<host>:8097` |
+| Разработка | `http://localhost:8096` | `http://localhost:8097` |
 
 ---
 
-## Authentication
+## Аутентификация
 
-All endpoints (except noted) require **HTTP Basic Auth**:
+Все эндпоинты (кроме отмеченных) требуют **HTTP Basic Auth**:
 
 ```bash
 curl -u admin:password http://host:8096/api/findings
 ```
 
-**Excluded paths** (no auth required):
+**Исключённые пути** (без аутентификации):
 - `/api/health`
 - `/metrics`
 - `/static/*`
@@ -25,13 +25,13 @@ curl -u admin:password http://host:8096/api/findings
 
 ---
 
-## sre-agent API (port 8096)
+## sre-agent API (порт 8096)
 
-### Health & Metrics
+### Проверка здоровья и метрики
 
 #### `GET /api/health`
-**Auth**: None  
-**Response**: `200 OK`
+**Auth**: Нет  
+**Ответ**: `200 OK`
 ```json
 {
   "status": "ok",
@@ -47,21 +47,21 @@ curl -u admin:password http://host:8096/api/findings
 ```
 
 #### `GET /metrics`
-**Auth**: None  
-**Response**: Prometheus text format
+**Auth**: Нет  
+**Ответ**: текстовый формат Prometheus
 
 ---
 
-### Findings
+### Находки
 
 #### `GET /api/findings`
 **Auth**: Basic  
-**Query Parameters**:
-| Param | Type | Default | Description |
+**Параметры запроса**:
+| Параметр | Тип | По умолчанию | Описание |
 |-------|------|---------|-------------|
-| `limit` | int | 50 | Max results |
+| `limit` | int | 50 | Максимальное число результатов |
 
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 [
   {
@@ -82,27 +82,27 @@ curl -u admin:password http://host:8096/api/findings
 
 #### `GET /api/findings/{id}`
 **Auth**: Basic  
-**Response**: `200 OK` or `404 Not Found`
+**Ответ**: `200 OK` или `404 Not Found`
 
 #### `POST /api/findings/{id}/ack`
 **Auth**: Basic  
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 {"ok": true, "id": 123}
 ```
 
 ---
 
-### Blog
+### Блог
 
 #### `GET /api/blog`
 **Auth**: Basic  
-**Query Parameters**:
-| Param | Type | Default | Description |
+**Параметры запроса**:
+| Параметр | Тип | По умолчанию | Описание |
 |-------|------|---------|-------------|
-| `limit` | int | 30 | Max results |
+| `limit` | int | 30 | Максимальное число результатов |
 
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 [
   {
@@ -116,66 +116,66 @@ curl -u admin:password http://host:8096/api/findings
 
 #### `GET /api/blog/status`
 **Auth**: Basic  
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 {
   "status": "idle",
   "error": null
 }
 ```
-Status values: `idle`, `generating`
+Значения статуса: `idle`, `generating`
 
 ---
 
-### Triggers
+### Ручной запуск
 
 #### `POST /api/trigger/scan`
 **Auth**: Basic  
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 {"ok": true, "message": "Скан аномалий запущен"}
 ```
 
 #### `POST /api/trigger/full-scan`
 **Auth**: Basic  
-**Body** (optional):
+**Тело запроса** (опционально):
 ```json
 {
   "start": "2025-01-20T00:00:00Z",
   "end": "2025-01-21T00:00:00Z"
 }
 ```
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 {"ok": true, "message": "Полное сканирование запущено"}
 ```
 
 #### `POST /api/trigger/blog`
 **Auth**: Basic  
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 {"ok": true, "message": "Генерация блог-поста запущена"}
 ```
 
 ---
 
-### Web UI
+### Веб-интерфейс
 
-| Path | Auth | Description |
+| Путь | Auth | Описание |
 |------|------|-------------|
-| `GET /` | Basic | Anomaly wall |
-| `GET /blog` | Basic | Blog digest |
-| `GET /static/*` | None | Static assets |
+| `GET /` | Basic | Стена аномалий |
+| `GET /blog` | Basic | Блог-дайджест |
+| `GET /static/*` | Нет | Статические файлы |
 
 ---
 
-## alert-analyzer API (port 8097)
+## alert-analyzer API (порт 8097)
 
-### Health & Metrics
+### Проверка здоровья и метрики
 
 #### `GET /api/health`
-**Auth**: None  
-**Response**: `200 OK`
+**Auth**: Нет  
+**Ответ**: `200 OK`
 ```json
 {
   "status": "ok",
@@ -189,17 +189,17 @@ Status values: `idle`, `generating`
 ```
 
 #### `GET /metrics`
-**Auth**: None  
-**Response**: Prometheus text format
+**Auth**: Нет  
+**Ответ**: текстовый формат Prometheus
 
 ---
 
-### Webhook
+### Вебхук
 
 #### `POST /webhook`
-**Auth**: Basic (optional via `AUTH_ENABLED=false`)  
+**Auth**: Basic (опционально через `AUTH_ENABLED=false`)  
 **Content-Type**: `application/json`  
-**Body**: Alertmanager webhook payload
+**Тело запроса**: полезная нагрузка вебхука Alertmanager
 
 ```json
 {
@@ -236,7 +236,7 @@ Status values: `idle`, `generating`
 }
 ```
 
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 {
   "status": "ok",
@@ -249,23 +249,23 @@ Status values: `idle`, `generating`
 
 #### `POST /webhook/test`
 **Auth**: Basic  
-**Response**: `200 OK` — Processes but doesn't store
+**Ответ**: `200 OK` — обрабатывает, но не сохраняет
 
 ---
 
-### Alert Analyses
+### Анализы алертов
 
 #### `GET /api/analyses`
 **Auth**: Basic  
-**Query Parameters**:
-| Param | Type | Default | Description |
+**Параметры запроса**:
+| Параметр | Тип | По умолчанию | Описание |
 |-------|------|---------|-------------|
-| `limit` | int | 50 | Max results |
-| `alertname` | string | — | Filter by alert name |
-| `severity` | string | — | Filter by severity |
-| `status` | string | — | Filter by status (firing/resolved) |
+| `limit` | int | 50 | Максимальное число результатов |
+| `alertname` | string | — | Фильтр по имени алерта |
+| `severity` | string | — | Фильтр по severity |
+| `status` | string | — | Фильтр по статусу (firing/resolved) |
 
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 [
   {
@@ -294,15 +294,15 @@ Status values: `idle`, `generating`
 
 #### `GET /api/analyses/{id}`
 **Auth**: Basic  
-**Response**: `200 OK` or `404 Not Found`
+**Ответ**: `200 OK` или `404 Not Found`
 
 ---
 
-### Stats & Control
+### Статистика и управление
 
 #### `GET /api/stats`
 **Auth**: Basic  
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 {
   "unresolved_critical": 3,
@@ -320,16 +320,16 @@ Status values: `idle`, `generating`
 
 #### `POST /api/flush`
 **Auth**: Basic  
-**Response**: `200 OK`
+**Ответ**: `200 OK`
 ```json
 {"flushed": 5}
 ```
 
 ---
 
-## Data Models
+## Модели данных
 
-### Finding
+### Finding (находка)
 ```json
 {
   "id": 123,
@@ -377,7 +377,7 @@ Status values: `idle`, `generating`
 }
 ```
 
-### AlertmanagerPayload (webhook input)
+### AlertmanagerPayload (входные данные вебхука)
 ```json
 {
   "receiver": "string",
@@ -416,7 +416,7 @@ Status values: `idle`, `generating`
 
 ---
 
-## Error Responses
+## Ошибки
 
 ### 400 Bad Request
 ```json
@@ -427,7 +427,7 @@ Status values: `idle`, `generating`
 ```json
 {"detail": "Not authenticated"}
 ```
-Headers: `WWW-Authenticate: Basic realm="Auto SRE"`
+Заголовки: `WWW-Authenticate: Basic realm="Auto SRE"`
 
 ### 404 Not Found
 ```json
@@ -441,22 +441,22 @@ Headers: `WWW-Authenticate: Basic realm="Auto SRE"`
 
 ---
 
-## Rate Limits
+## Ограничение частоты запросов
 
-No explicit rate limiting implemented. Recommended to add via reverse proxy (nginx/traefik).
-
----
-
-## Pagination
-
-List endpoints support `?limit=N` (default 50 for findings, 30 for blog/analyses).  
-No cursor/offset pagination — results ordered by `created_at DESC`.
+Явное ограничение частоты запросов не реализовано. Рекомендуется добавить на уровне обратного прокси (nginx/traefik).
 
 ---
 
-## Webhooks
+## Пагинация
 
-### Alertmanager Configuration
+Эндпоинты списков поддерживают `?limit=N` (по умолчанию 50 для находок, 30 для блога и анализов).  
+Курсорная и offset-пагинация отсутствуют — результаты упорядочены по `created_at DESC`.
+
+---
+
+## Вебхуки
+
+### Конфигурация Alertmanager
 
 ```yaml
 receivers:

@@ -1,62 +1,62 @@
-# Auto SRE Documentation Index
+# Auto SRE — указатель документации
 
-## Overview
+## Обзор
 
-Auto SRE is an LLM-powered observability platform with two main services:
+Auto SRE — платформа наблюдаемости на базе LLM с двумя основными сервисами:
 
-| Service | Port | Purpose |
+| Сервис | Порт | Назначение |
 |---------|------|---------|
-| **sre-agent** | 8096 | Log anomaly detection, web UI, blog generation |
-| **alert-analyzer** | 8097 | Alertmanager webhook consumer, alert correlation |
+| **sre-agent** | 8096 | Обнаружение аномалий в логах, веб-интерфейс, генерация блог-постов |
+| **alert-analyzer** | 8097 | Приём вебхуков Alertmanager, корреляция алертов |
 
 ---
 
-## Documentation
+## Документация
 
-| Document | Description |
+| Документ | Описание |
 |----------|-------------|
-| [Architecture](architecture.md) | System design, data flows, database schema, Kafka topics |
-| [API Reference](api-reference.md) | Complete REST API docs for both services |
-| [Deployment](deployment.md) | Production (Ansible) and local development setup |
-| [Code Review](code-review.md) | Detailed code review with 12 findings and action plan |
+| [Архитектура](architecture.md) | Устройство системы, потоки данных, схема БД, топики Kafka |
+| [Справочник API](api-reference.md) | Полная документация REST API обоих сервисов |
+| [Развёртывание](deployment.md) | Развёртывание: прод (Ansible) и локальная разработка |
+| [Ревью кода](code-review.md) | Детальное ревью кода: 12 замечаний и план действий |
 
 ---
 
-## Quick Links
+## Быстрые ссылки
 
-### For Developers
-- [Architecture Overview](architecture.md#component-diagram)
-- [API Reference](api-reference.md)
-- [Code Review Findings](code-review.md#-critical-issues)
+### Разработчикам
+- [Обзор архитектуры](architecture.md#диаграмма-компонентов)
+- [Справочник API](api-reference.md)
+- [Замечания из ревью кода](code-review.md#-критичные-проблемы)
 
-### For Operators
-- [Deployment Guide](deployment.md)
-- [Monitoring Setup](deployment.md#monitoring-setup)
-- [Troubleshooting](deployment.md#troubleshooting)
+### Эксплуатация
+- [Руководство по развёртыванию](deployment.md)
+- [Настройка мониторинга](deployment.md#настройка-мониторинга)
+- [Устранение неполадок](deployment.md#устранение-неполадок)
 
-### For Security
-- [Security Checklist](deployment.md#security-hardening)
-- [Auth Configuration](architecture.md#configuration)
+### Безопасность
+- [Чек-лист безопасности](deployment.md#укрепление-безопасности)
+- [Конфигурация аутентификации](architecture.md#конфигурация)
 
 ---
 
-## System Status
+## Статус системы
 
-| Component | Status | Notes |
+| Компонент | Статус | Примечания |
 |-----------|--------|-------|
-| sre-agent | ✅ Production ready | Log scanning, web UI, blog generation |
-| alert-analyzer | ✅ Production ready | Alertmanager webhook, LLM analysis |
-| PostgreSQL | ✅ Schema defined | Migrations in `files/*/migrations/` |
-| Kafka | ✅ Configured | KRaft mode, 4 topics |
-| Metrics | ✅ 53+ metrics | Prometheus format at `/metrics` |
-| Alerting | ✅ 25+ rules | In `files/sre-agent/alerting/` |
-| Auth | ✅ Basic Auth | Optional, configurable |
+| sre-agent | ✅ Готов к продакшену | Скан логов, веб-интерфейс, генерация блог-постов |
+| alert-analyzer | ✅ Готов к продакшену | Вебхук Alertmanager, LLM-анализ |
+| PostgreSQL | ✅ Схема определена | Миграции в `files/*/migrations/` |
+| Kafka | ✅ Настроен | Режим KRaft, 4 топика |
+| Метрики | ✅ 53+ метрик | Формат Prometheus на `/metrics` |
+| Алертинг | ✅ 25+ правил | В `files/sre-agent/alerting/` |
+| Аутентификация | ✅ Basic Auth | Опционально, настраивается |
 
 ---
 
-## Getting Started
+## Быстрый старт
 
-### Local Development (5 minutes)
+### Локальная разработка (5 минут)
 ```bash
 cd auto-sre
 cat > .env <<'EOF'
@@ -77,90 +77,90 @@ EOF
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
-### Production Deploy
+### Деплой на прод
 ```bash
 ansible-playbook -i inventory/all-01-prod auto-sre.yaml --ask-vault-pass
 ```
 
 ---
 
-## Key Metrics to Watch
+## Ключевые метрики для наблюдения
 
 ```promql
-# Service health
+# Здоровье сервиса
 auto_sre_up
 
-# Scan health
+# Здоровье сканов
 auto_sre_last_scan_error
 auto_sre_last_scan_timestamp
 
-# Dependency health
+# Здоровье зависимостей
 auto_sre_vl_circuit_breaker_state
 auto_sre_llm_circuit_breaker_state
 
-# Kafka health
+# Здоровье Kafka
 auto_sre_kafka_consumer_lag
 auto_sre_kafka_outbox_pending
 
-# Database health
+# Здоровье БД
 auto_sre_db_pool_checked_out / auto_sre_db_pool_size
 
-# Alert analyzer
+# Анализатор алертов
 auto_sre_alert_webhook_received_total
 auto_sre_alert_analysis_duration_seconds
 ```
 
 ---
 
-## Code Structure
+## Структура кода
 
 ```
 auto-sre/
-├── docs/                          # Documentation
-├── templates/                     # Ansible templates
-│   ├── env.j2                     # Environment variables
-│   ├── docker-compose.yml.j2      # Production compose
-│   └── docker-compose.dev.yml.j2  # Development compose
+├── docs/                          # Документация
+├── templates/                     # Шаблоны Ansible
+│   ├── env.j2                     # Переменные окружения
+│   ├── docker-compose.yml.j2      # Compose для прода
+│   └── docker-compose.dev.yml.j2  # Compose для разработки
 ├── tasks/
-│   └── main.yml                   # Ansible tasks
+│   └── main.yml                   # Задачи Ansible
 ├── files/
 │   ├── common/
-│   │   └── llm_client.py          # Shared LLM client
-│   ├── sre-agent/                 # Main service
+│   │   └── llm_client.py          # Общий LLM-клиент
+│   ├── sre-agent/                 # Основной сервис
 │   │   ├── app.py                 # FastAPI + APScheduler
-│   │   ├── agent.py               # Scanning logic
+│   │   ├── agent.py               # Логика скана
 │   │   ├── store.py               # PostgreSQL + outbox
-│   │   ├── vl.py                  # Victoria Logs client
-│   │   ├── llm.py                 # LLM wrapper (legacy)
-│   │   ├── kafka_producer.py      # Idempotent producer
-│   │   ├── kafka_consumer.py      # Background worker
-│   │   ├── metrics.py             # 53+ Prometheus metrics
-│   │   ├── models.py              # SQLAlchemy models
-│   │   └── migrations/            # SQL migrations
-│   └── alert-analyzer/            # Alert service
-│       ├── app.py                 # FastAPI webhook
-│       ├── analyzer.py            # Batching + LLM
-│       ├── models.py              # Pydantic models
+│   │   ├── vl.py                  # Клиент Victoria Logs
+│   │   ├── llm.py                 # Обёртка LLM (legacy)
+│   │   ├── kafka_producer.py      # Идемпотентный продюсер
+│   │   ├── kafka_consumer.py      # Фоновый воркер
+│   │   ├── metrics.py             # 53+ метрик Prometheus
+│   │   ├── models.py              # SQLAlchemy-модели
+│   │   └── migrations/            # SQL-миграции
+│   └── alert-analyzer/            # Сервис алертов
+│       ├── app.py                 # FastAPI-вебхук
+│       ├── analyzer.py            # Батчинг + LLM
+│       ├── models.py              # Pydantic-модели
 │       ├── store.py               # PostgreSQL
 │       └── migrations/
-└── README.md                      # Deployment guide (ru)
+└── README.md                      # Руководство по развёртыванию (ru)
 ```
 
 ---
 
-## Contributing
+## Как вносить изменения
 
-1. **Code style**: Standard Python, async/await, type hints
-2. **Metrics**: Add to `metrics.py` before instrumenting
-3. **Database**: Add migration in `migrations/` + update models
-4. **Tests**: No test suite yet - verify manually via API
-5. **Docs**: Update relevant `.md` in `docs/`
+1. **Стиль кода**: стандартный Python, async/await, аннотации типов
+2. **Метрики**: сначала добавляйте в `metrics.py`, потом инструментируйте
+3. **База данных**: миграция в `migrations/` + обновление моделей
+4. **Тесты**: тестового набора пока нет — проверяйте вручную через API
+5. **Документация**: обновляйте соответствующие `.md` в `docs/`
 
 ---
 
-## Support
+## Поддержка
 
-- **Issues**: Check [Code Review](code-review.md) for known issues
-- **Logs**: `docker compose logs -f sre-agent`
-- **Metrics**: `curl http://host:8096/metrics`
-- **Health**: `curl http://host:8096/api/health`
+- **Проблемы**: известные проблемы см. в [Ревью кода](code-review.md)
+- **Логи**: `docker compose logs -f sre-agent`
+- **Метрики**: `curl http://host:8096/metrics`
+- **Здоровье**: `curl http://host:8096/api/health`

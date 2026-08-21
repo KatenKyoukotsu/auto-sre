@@ -1,41 +1,41 @@
-# Developer Guide — Auto SRE
+# Руководство разработчика — Auto SRE
 
-## Development Environment
+## Среда разработки
 
-### Prerequisites
+### Требования
 - Python 3.12+
 - Docker + Docker Compose
-- PostgreSQL 16 (container)
-- Kafka 7.6+ KRaft (container)
-- Victoria Logs (external)
-- LiteLLM (external)
+- PostgreSQL 16 (контейнер)
+- Kafka 7.6+ KRaft (контейнер)
+- Victoria Logs (внешний)
+- LiteLLM (внешний)
 
-### Project Structure
+### Структура проекта
 ```
 files/
 ├── common/
-│   └── llm_client.py          # Shared LLM client (reusable)
-├── sre-agent/                 # Main scanning service
+│   └── llm_client.py          # Общий LLM-клиент (переиспользуемый)
+├── sre-agent/                 # Основной сервис сканирования
 │   ├── app.py                 # FastAPI + APScheduler + middleware
-│   ├── agent.py               # Core scanning logic
+│   ├── agent.py               # Основная логика сканирования
 │   ├── store.py               # SQLAlchemy 2.0 async + outbox
-│   ├── vl.py                  # Victoria Logs HTTP client
-│   ├── kafka_producer.py      # Producer + outbox poller
-│   ├── kafka_consumer.py      # Consumer worker (LLM analysis)
-│   ├── metrics.py             # All Prometheus metrics
-│   └── models.py              # SQLAlchemy models
-└── alert-analyzer/            # Alert analysis service
-    ├── app.py                 # FastAPI webhook receiver
-    ├── analyzer.py            # Batching + LLM correlation
-    ├── models.py              # Pydantic Alertmanager models
-    └── store.py               # Alert analysis storage
+│   ├── vl.py                  # HTTP-клиент Victoria Logs
+│   ├── kafka_producer.py      # Продюсер + поллер outbox
+│   ├── kafka_consumer.py      # Воркер-консюмер (LLM-анализ)
+│   ├── metrics.py             # Все метрики Prometheus
+│   └── models.py              # Модели SQLAlchemy
+└── alert-analyzer/            # Сервис анализа алертов
+    ├── app.py                 # Приёмник вебхуков на FastAPI
+    ├── analyzer.py            # Батчинг + LLM-корреляция
+    ├── models.py              # Pydantic-модели Alertmanager
+    └── store.py               # Хранилище анализов алертов
 ```
 
 ---
 
-## Adding New Metrics
+## Добавление новой метрики
 
-### 1. Define in `metrics.py`
+### 1. Определение в `metrics.py`
 ```python
 from prometheus_client import Counter, Histogram, Gauge
 
@@ -47,70 +47,70 @@ my_new_metric = Histogram(
 )
 ```
 
-### 2. Import and Use
+### 2. Импорт и использование
 ```python
 from metrics import my_new_metric
 
-# In your code
+# В вашем коде
 my_new_metric.labels(label1="value1", label2="value2").observe(1.5)
 ```
 
-### 3. Rules
-- Use `auto_sre_` prefix
-- Include units in name (`_seconds`, `_bytes`, `_total`)
-- Add labels for cardinality control
-- Document in code review
+### 3. Правила
+- Используйте префикс `auto_sre_`
+- Включайте единицы измерения в имя (`_seconds`, `_bytes`, `_total`)
+- Добавляйте метки для контроля кардинальности
+- Документируйте в code review
 
 ---
 
-## Adding New API Endpoint (sre-agent)
+## Добавление нового API-эндпоинта (sre-agent)
 
-### 1. Add Route in `app.py`
+### 1. Добавление маршрута в `app.py`
 ```python
 @app.get("/api/new-endpoint")
 async def api_new_endpoint(param: str = "default", _: bool = Depends(verify_auth)):
-    # Public endpoint: don't add Depends(verify_auth)
-    # Add to AUTH_EXCLUDE_PATHS if public
+    # Публичный эндпоинт: не добавляйте Depends(verify_auth)
+    # Если публичный — добавьте в AUTH_EXCLUDE_PATHS
     return {"result": "ok"}
 ```
 
-### 2. Update Auth Exclusions (if public)
+### 2. Обновление исключений аутентификации (если эндпоинт публичный)
 ```python
 AUTH_EXCLUDE_PATHS = {
     "/api/health",
     "/metrics",
     "/static",
     "/favicon.ico",
-    "/api/new-endpoint",  # Add here
+    "/api/new-endpoint",  # Добавьте сюда
 }
 ```
 
-### 3. Normalize Path for Metrics
+### 3. Нормализация пути для метрик
 ```python
-# In metrics_middleware
+# В metrics_middleware
 if path.startswith("/api/new-endpoint/"):
     path = "/api/new-endpoint/{param}"
 ```
 
 ---
 
-## Database Changes
+## Изменения базы данных
 
-### 1. Update Model in `models.py` / `store.py`
+### 1. Обновление модели в `models.py` / `store.py`
 ```python
 class NewTable(Base):
     __tablename__ = "new_table"
     
     id = Column(Integer, primary_key=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    # ... fields
+    # ... поля
     
     __table_args__ = (
         Index("idx_new_table_field", "field"),
     )
 ```
 
-### 2. Create Migration
+### 2. Создание миграции
 ```sql
 -- files/sre-agent/migrations/02_new_table.sql
 CREATE TABLE IF NOT EXISTS new_table (
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS new_table (
 CREATE INDEX idx_new_table_field ON new_table(field);
 ```
 
-### 3. Update `init_db()` if needed
+### 3. Обновление `init_db()` при необходимости
 ```python
 async def init_db() -> None:
     async with engine.begin() as conn:
@@ -130,16 +130,16 @@ async def init_db() -> None:
 
 ---
 
-## Adding New Kafka Topic
+## Добавление нового топика Kafka
 
-### 1. Define in Compose Template
+### 1. Определение в шаблоне Compose
 ```yaml
 # templates/docker-compose.yml.j2
 environment:
   - KAFKA_TOPIC_NEW=auto-sre.new-topic
 ```
 
-### 2. Add to Producer
+### 2. Добавление в продюсер
 ```python
 # kafka_producer.py
 KAFKA_TOPIC_NEW = os.environ.get("KAFKA_TOPIC_NEW", "auto-sre.new-topic")
@@ -148,12 +148,12 @@ async def send_new_event(self, data: dict) -> None:
     await self.send(KAFKA_TOPIC_NEW, data, key=data.get("key"))
 ```
 
-### 3. Add to Consumer
+### 3. Добавление в консюмер
 ```python
 # kafka_consumer.py
 self._consumer = AIOKafkaConsumer(
     KAFKA_TOPIC_FINDINGS,
-    KAFKA_TOPIC_NEW,  # Add here
+    KAFKA_TOPIC_NEW,  # Добавьте сюда
     # ...
 )
 
@@ -164,15 +164,15 @@ async def _process_message(self, topic: str, key: str, value: dict):
 
 ---
 
-## LLM Prompt Engineering
+## Разработка LLM-промптов
 
-### Guidelines
-1. **System prompt**: Define role, rules, output format
-2. **User prompt**: Template with clear placeholders
-3. **Output**: Strict JSON schema in prompt
-4. **Validation**: Use `complete_json()` + validate keys
+### Рекомендации
+1. **Системный промпт**: определите роль, правила и формат вывода
+2. **Пользовательский промпт**: шаблон с понятными плейсхолдерами
+3. **Вывод**: строгая JSON-схема прямо в промпте
+4. **Валидация**: используйте `complete_json()` + проверку ключей
 
-### Example Pattern
+### Пример паттерна
 ```python
 MY_SYSTEM_PROMPT = """
 You are an SRE. Analyze X and return JSON:
@@ -187,7 +187,7 @@ async def my_analysis(self, data: dict) -> dict:
     user_prompt = TEMPLATE.format(data=json.dumps(data))
     result = await self.llm.complete_json(MY_SYSTEM_PROMPT, user_prompt)
     
-    # Validate required keys
+    # Проверка обязательных ключей
     required = ["field1", "field2"]
     for key in required:
         if key not in result:
@@ -198,16 +198,16 @@ async def my_analysis(self, data: dict) -> dict:
 
 ---
 
-## Testing Changes Locally
+## Локальное тестирование изменений
 
-### 1. Build Image
+### 1. Сборка образа
 ```bash
 docker build -f files/sre-agent/Dockerfile -t auto-sre-agent-test files/sre-agent
 ```
 
-### 2. Run with Test DB
+### 2. Запуск с тестовой БД
 ```bash
-# Start test PostgreSQL
+# Запуск тестового PostgreSQL
 docker run -d --name test-pg \
   -e POSTGRES_DB=auto_sre \
   -e POSTGRES_USER=auto_sre \
@@ -215,10 +215,10 @@ docker run -d --name test-pg \
   -p 5432:5432 \
   postgres:16-alpine
 
-# Wait for ready
+# Ожидание готовности
 sleep 5
 
-# Run tests
+# Запуск теста
 docker run --rm --network host \
   -e DATABASE_URL=postgresql+asyncpg://auto_sre:test@localhost:5432/auto_sre \
   -e VL_URL=http://test \
@@ -229,29 +229,29 @@ from store import init_db, Store
 async def test():
     await init_db()
     store = Store()
-    # ... your test
+    # ... ваш тест
     await close_db()
 asyncio.run(test())
 "
 ```
 
-### 3. Check Logs
+### 3. Просмотр логов
 ```bash
 docker compose -f docker-compose.dev.yml logs -f sre-agent
 ```
 
 ---
 
-## Common Patterns
+## Типовые паттерны
 
-### Async Database Operation with Metrics
+### Асинхронная операция с БД с записью метрик
 ```python
 async def my_db_operation(self, data: dict) -> int:
     start_time = time.time()
     update_pool_metrics()
     try:
         async with self._session_maker() as session:
-            # ... operation
+            # ... операция
             await session.commit()
             _record_db_query("my_operation", start_time, True)
             return obj.id
@@ -260,32 +260,32 @@ async def my_db_operation(self, data: dict) -> int:
         raise
 ```
 
-### Circuit Breaker Usage
+### Использование circuit breaker
 ```python
-# Check before call
+# Проверка перед вызовом
 if not self._circuit.can_proceed():
     raise MyError("Circuit breaker OPEN")
 
-# After success
+# После успеха
 self._circuit.record_success()
 
-# After failure
+# После сбоя
 self._circuit.record_failure()
 ```
 
-### Graceful Shutdown Tracking
+### Отслеживание задач при корректной остановке
 ```python
-# In app.py lifespan
+# В lifespan из app.py
 _running_tasks: set[asyncio.Task] = set()
 
 def _track_task(task: asyncio.Task):
     _running_tasks.add(task)
     task.add_done_callback(_running_tasks.discard)
 
-# When starting background work
+# При запуске фоновой задачи
 _track_task(asyncio.create_task(my_background_job()))
 
-# On shutdown
+# При остановке
 if _running_tasks:
     await asyncio.wait_for(
         asyncio.gather(*_running_tasks, return_exceptions=True),
@@ -295,58 +295,58 @@ if _running_tasks:
 
 ---
 
-## Debugging Tips
+## Советы по отладке
 
-### Enable Debug Logging
+### Включение debug-логирования
 ```bash
 LOG_LEVEL=DEBUG docker compose up
 ```
 
-### Inspect Database
+### Инспекция базы данных
 ```bash
 docker exec -it auto-sre-postgres psql -U auto_sre -d auto_sre -c "SELECT * FROM findings ORDER BY created_at DESC LIMIT 10;"
 ```
 
-### Check Kafka
+### Проверка Kafka
 ```bash
-# List topics
+# Список топиков
 docker exec auto-sre-kafka kafka-topics --bootstrap-server localhost:9092 --list
 
-# Consumer lag
+# Отставание консюмера
 docker exec auto-sre-kafka kafka-consumer-groups --bootstrap-server localhost:9092 --describe --group auto-sre-worker
 
-# Consume messages
+# Чтение сообщений
 docker exec auto-sre-kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic auto-sre.findings --from-beginning --max-messages 5
 ```
 
-### Metrics Debugging
+### Отладка метрик
 ```bash
-# All metrics
+# Все метрики
 curl -s http://localhost:8096/metrics | grep auto_sre
 
-# Specific metric
+# Конкретная метрика
 curl -s http://localhost:8096/metrics | grep auto_sre_scan
 ```
 
 ---
 
-## Common Pitfalls
+## Частые проблемы
 
-| Issue | Solution |
+| Проблема | Решение |
 |-------|----------|
-| `asyncpg` connection errors | Check `DATABASE_URL` format, ensure PostgreSQL ready |
-| Kafka consumer not receiving | Verify topic exists, consumer group matches |
-| LLM returns invalid JSON | Improve prompt, add validation, check `max_tokens` |
-| High memory usage | Check for unclosed sessions, add `expire_on_commit=False` |
-| Metrics not appearing | Verify `prometheus_client` imported, middleware order |
-| Auth not working | Check `AUTH_ENABLED`, header format `Basic base64(user:pass)` |
+| Ошибки подключения `asyncpg` | Проверьте формат `DATABASE_URL`, убедитесь, что PostgreSQL готов |
+| Консюмер Kafka не получает сообщения | Проверьте существование топика и совпадение группы консюмеров |
+| LLM возвращает невалидный JSON | Улучшите промпт, добавьте валидацию, проверьте `max_tokens` |
+| Высокое потребление памяти | Проверьте незакрытые сессии, добавьте `expire_on_commit=False` |
+| Метрики не появляются | Убедитесь, что `prometheus_client` импортирован, проверьте порядок middleware |
+| Аутентификация не работает | Проверьте `AUTH_ENABLED`, формат заголовка `Basic base64(user:pass)` |
 
 ---
 
-## Performance Tips
+## Советы по производительности
 
-1. **Batch DB operations** - Use `session.add_all()` for bulk inserts
-2. **Limit query results** - Always use `.limit()` on queries
-3. **Reuse HTTP clients** - Single `httpx.AsyncClient` with connection pool
-4. **Async throughout** - Never use blocking calls in async functions
-5. **Metrics cardinality** - Normalize paths, avoid high-cardinality labels
+1. **Батчинг операций с БД** — используйте `session.add_all()` для массовых вставок
+2. **Ограничивайте результаты запросов** — всегда применяйте `.limit()`
+3. **Переиспользуйте HTTP-клиенты** — один `httpx.AsyncClient` с пулом соединений
+4. **Асинхронность повсюду** — никогда не используйте блокирующие вызовы в async-функциях
+5. **Кардинальность метрик** — нормализуйте пути, избегайте высококардинальных меток

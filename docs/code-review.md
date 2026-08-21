@@ -1,71 +1,71 @@
-# Code Review Report — Auto SRE
+# Отчёт о ревью кода — Auto SRE
 
-**Date**: 2025-01-21  
-**Reviewer**: AI Assistant  
-**Scope**: Full codebase review (sre-agent, alert-analyzer, common modules)
-
----
-
-## Executive Summary
-
-The Auto SRE project is a well-structured anomaly detection system with LLM-powered analysis. The architecture uses:
-- **PostgreSQL** for persistent storage (findings, blog posts, outbox events)
-- **Kafka** for event streaming (findings, blog, scan events, alerts)
-- **Victoria Logs** direct HTTP for log queries
-- **LiteLLM** (OpenAI-compatible) for LLM analysis
-- **Prometheus metrics** throughout with 100+ metric definitions
-
-Two main services:
-1. **sre-agent** (port 8096) — periodic log scanning + web UI
-2. **alert-analyzer** (port 8097) — Alertmanager webhook consumer + LLM alert analysis
+**Дата**: 2025-01-21  
+**Ревьюер**: AI-ассистент  
+**Объём**: полное ревью кодовой базы (sre-agent, alert-analyzer, общие модули)
 
 ---
 
-## Architecture Overview
+## Краткое резюме
+
+Проект Auto SRE — хорошо структурированная система обнаружения аномалий с анализом на базе LLM. Архитектура использует:
+- **PostgreSQL** для постоянного хранения (находки, посты блога, outbox-события)
+- **Kafka** для потоковой передачи событий (находки, блог, события сканов, алерты)
+- **Victoria Logs** — прямой HTTP для запросов к логам
+- **LiteLLM** (OpenAI-совместимый) для LLM-анализа
+- **Метрики Prometheus** по всему проекту, 100+ определений метрик
+
+Два основных сервиса:
+1. **sre-agent** (порт 8096) — периодический скан логов + веб-UI
+2. **alert-analyzer** (порт 8097) — приём webhook'ов Alertmanager + LLM-анализ алертов
+
+---
+
+## Обзор архитектуры
 
 ```mermaid
 flowchart TB
-    subgraph logflow ["Log anomaly detection (sre-agent)"]
+    subgraph logflow ["Обнаружение аномалий в логах (sre-agent)"]
         direction TB
-        VL["Victoria Logs<br/>(direct HTTP)"] --> SA["sre-agent<br/>(scanner + API)"]
-        SA --> PG[("PostgreSQL<br/>findings · blog · outbox")]
-        SA --> K["Kafka<br/>(outbox events)"]
-        K --> KC["Kafka Consumer<br/>(LLM analysis)"]
-        KC --> PG2[("PostgreSQL<br/>enriched findings")]
+        VL["Victoria Logs<br/>(прямой HTTP)"] --> SA["sre-agent<br/>(сканер + API)"]
+        SA --> PG[("PostgreSQL<br/>находки · блог · outbox")]
+        SA --> K["Kafka<br/>(outbox-события)"]
+        K --> KC["Консюмер Kafka<br/>(LLM-анализ)"]
+        KC --> PG2[("PostgreSQL<br/>обогащённые находки")]
     end
 
-    subgraph alertflow ["Alert analysis (alert-analyzer)"]
+    subgraph alertflow ["Анализ алертов (alert-analyzer)"]
         direction TB
         AM["Alertmanager<br/>(webhook)"] --> AA["alert-analyzer<br/>(webhook + LLM)"]
         AA --> APG[("PostgreSQL<br/>alert_analysis")]
-        AA --> AK["Kafka<br/>(alert events)"]
-        AK --> AKC["Kafka Consumer<br/>(future work)"]
+        AA --> AK["Kafka<br/>(события алертов)"]
+        AK --> AKC["Консюмер Kafka<br/>(будущая работа)"]
     end
 ```
 
 ---
 
-## Detailed Findings
+## Детальные замечания
 
-### ✅ Strengths
+### ✅ Сильные стороны
 
-| Area | Observation |
+| Область | Наблюдение |
 |------|-------------|
-| **Observability** | Excellent — 100+ Prometheus metrics covering scan, VL, LLM, Kafka, DB, HTTP, alerts |
-| **Resilience** | Circuit breakers on VL and LLM clients with exponential backoff retry |
-| **Delivery Guarantees** | Transactional outbox pattern ensures exactly-once delivery to Kafka |
-| **Async Throughout** | Proper async/await with SQLAlchemy 2.0 async, aiokafka, httpx |
-| **Graceful Shutdown** | Tracks background tasks, waits for completion, closes connections |
-| **Security** | Basic Auth with configurable exclusions (health, metrics, static) |
-| **Deduplication** | Time-window based dedup for both findings and alerts |
-| **Metrics Cardinality** | HTTP path normalization prevents label explosion |
-| **Configuration** | Environment-driven with sensible defaults |
+| **Наблюдаемость** | Отлично — 100+ метрик Prometheus, покрывающих скан, VL, LLM, Kafka, БД, HTTP, алерты |
+| **Устойчивость** | Circuit breaker в клиентах VL и LLM с повторами и экспоненциальным backoff |
+| **Гарантии доставки** | Паттерн transactional outbox обеспечивает доставку в Kafka ровно один раз (exactly-once) |
+| **Асинхронность** | Корректный async/await с SQLAlchemy 2.0 async, aiokafka, httpx |
+| **Корректное завершение работы** | Отслеживает фоновые задачи, дожидается их завершения, закрывает соединения |
+| **Безопасность** | Basic Auth с настраиваемыми исключениями (health, metrics, static) |
+| **Дедупликация** | Дедупликация по временному окну как для находок, так и для алертов |
+| **Кардинальность метрик** | Нормализация HTTP-путей предотвращает взрывной рост лейблов |
+| **Конфигурация** | Через переменные окружения с разумными значениями по умолчанию |
 
 ---
 
-### ⚠️ Critical Issues
+### ⚠️ Критичные проблемы
 
-#### 1. **Kafka Consumer — Creates New Agent Instance Per Worker** (`kafka_consumer.py:65-69`)
+#### 1. **Kafka Consumer — создаёт новый экземпляр Agent на каждого воркера** (`kafka_consumer.py:65-69`)
 ```python
 self._agent = Agent(
     store=Store(),
@@ -73,31 +73,31 @@ self._agent = Agent(
     llm=LlmClient(),
 )
 ```
-**Problem**: Each consumer worker creates its own DB pool, VL client, LLM client. Should reuse shared instances.
+**Проблема**: Каждый воркер консюмера создаёт собственный пул соединений с БД, клиент VL, клиент LLM. Следует переиспользовать общие экземпляры.
 
-**Fix**: Pass shared `Store`, `LlmClient`, `HttpVlClient` instances to worker.
+**Исправление**: Передавать воркеру общие экземпляры `Store`, `LlmClient`, `HttpVlClient`.
 
-#### 2. **Outbox Poller Creates New Producer Each Cycle** (`kafka_producer.py:120-121`)
+#### 2. **Outbox-поллер создаёт нового продюсера на каждом цикле** (`kafka_producer.py:120-121`)
 ```python
 producer = KafkaProducer()
 await producer.start()
 ```
-**Problem**: Creates new Kafka producer connection every 5 seconds. High overhead.
+**Проблема**: Новое соединение продюсера Kafka создаётся каждые 5 секунд. Высокие накладные расходы.
 
-**Fix**: Reuse singleton producer or use connection pool.
+**Исправление**: Переиспользовать singleton-продюсер или использовать пул соединений.
 
-#### 3. **Deduplication Race Condition** (`agent.py:302-316`)
+#### 3. **Гонка при дедупликации** (`agent.py:302-316`)
 ```python
 recent = await self.store.list_findings(limit=50)
 for existing in recent:
-    # check and return early
+    # проверка и ранний выход
 finding_id = await self.store.add_finding_with_outbox(...)
 ```
-**Problem**: Between `list_findings` and `add_finding_with_outbox`, another scan could insert same finding.
+**Проблема**: Между `list_findings` и `add_finding_with_outbox` другой скан может вставить ту же находку.
 
-**Fix**: Add unique constraint on `(service, created_at)` or use DB-level upsert with `ON CONFLICT`.
+**Исправление**: Добавить уникальный constraint на `(service, created_at)` или использовать upsert на уровне БД с `ON CONFLICT`.
 
-#### 4. **Alert Deduplication Inefficient** (`analyzer.py:155-167`)
+#### 4. **Неэффективная дедупликация алертов** (`analyzer.py:155-167`)
 ```python
 analyses = await self.store.list_analyses(limit=100, since=since)
 for a in analyses:
@@ -105,167 +105,167 @@ for a in analyses:
     if fingerprint in correlated:
         return True
 ```
-**Problem**: Fetches 100 rows, deserializes JSON for each. No DB index on `correlated_group`.
+**Проблема**: Загружает 100 строк и десериализует JSON для каждой. В БД нет индекса по `correlated_group`.
 
-**Fix**: Add separate table `alert_dedup(fingerprint, created_at)` with unique index.
+**Исправление**: Добавить отдельную таблицу `alert_dedup(fingerprint, created_at)` с уникальным индексом.
 
-#### 5. **Missing Error Handling for LLM JSON Parse** (`llm_client.py:179-188`)
+#### 5. **Отсутствует обработка ошибок парсинга JSON от LLM** (`llm_client.py:179-188`)
 ```python
 def extract_json(text: str) -> dict:
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         return {}
 ```
-**Problem**: Returns empty dict on parse failure — downstream code assumes valid keys exist.
+**Проблема**: Возвращает пустой dict при ошибке парсинга — код ниже рассчитывает на наличие валидных ключей.
 
-**Fix**: Raise exception or return structured error result.
+**Исправление**: Бросать исключение или возвращать структурированный результат с ошибкой.
 
-#### 6. **Hardcoded LLM Model in Metrics** (`agent.py:191-194`)
+#### 6. **Захардкоженная модель LLM в метриках** (`agent.py:191-194`)
 ```python
 scan_findings_created.labels(severity=severity).inc()
 findings_created_total.labels(severity=severity, service=service).inc()
 ```
-Uses `agent.llm.model` but metrics don't track model version. Can't correlate quality with model changes.
+Используется `agent.llm.model`, но метрики не отслеживают версию модели. Невозможно сопоставить качество с изменениями модели.
 
 ---
 
-### 🔧 Major Improvements Needed
+### 🔧 Требуемые существенные улучшения
 
-#### 7. **No Health Checks for Dependencies** (`app.py:295-309`)
-`/api/health` only checks DB queries. Doesn't verify:
-- Victoria Logs connectivity
-- Kafka connectivity
-- LLM endpoint availability
+#### 7. **Нет health-check зависимостей** (`app.py:295-309`)
+`/api/health` проверяет только запросы к БД. Не проверяет:
+- доступность Victoria Logs
+- доступность Kafka
+- доступность эндпоинта LLM
 
-#### 8. **No Request Timeout on VL/LLM Calls**
-- `vl.py`: `httpx.Timeout(60)` but no per-request deadline enforcement
-- `llm_client.py`: `timeout=180` on client but no request-level timeout
+#### 8. **Нет таймаута запросов к VL/LLM**
+- `vl.py`: есть `httpx.Timeout(60)`, но нет контроля дедлайна на уровне отдельного запроса
+- `llm_client.py`: `timeout=180` на клиенте, но нет таймаута уровня запроса
 
-#### 9. **Kafka Consumer No Dead Letter Queue**
-Failed messages are logged but not persisted for reprocessing. After max retries, message is lost.
+#### 9. **У консюмера Kafka нет Dead Letter Queue**
+Ошибочные сообщения логируются, но не сохраняются для повторной обработки. После исчерпания попыток сообщение теряется.
 
-#### 10. **Outbox Retry Logic Incomplete** (`kafka_producer.py:129-133`)
+#### 10. **Неполная логика повторов в outbox** (`kafka_producer.py:129-133`)
 ```python
 event.retry_count += 1
 event.last_error = str(exc)
 ```
-No max retry limit, no exponential backoff, no dead letter handling.
+Нет лимита повторов, нет экспоненциального backoff, нет dead-letter обработки.
 
-#### 11. **Alert Batcher No Persistence**
-In-memory buffer (`AlertBatcher._buffer`) — restarts lose pending alerts.
+#### 11. **Батчер алертов без персистентности**
+Буфер в памяти (`AlertBatcher._buffer`) — при перезапуске ожидающие алерты теряются.
 
-#### 12. **No Database Migration Strategy**
-Uses `Base.metadata.create_all()` on startup. No alembic migrations for schema changes.
-
----
-
-### 📝 Code Quality Issues
-
-| File | Line | Issue |
-|------|------|-------|
-| `store.py` | 110 | `_to_dict` uses `row.__table__.columns` — breaks with hybrid properties |
-| `agent.py` | 307-311 | `datetime.fromisoformat` on potentially non-ISO strings |
-| `kafka_consumer.py` | 150-153 | Dynamic import `from store import Finding` inside function |
-| `app.py` | 181-184 | Path normalization only for `/api/findings/{id}` — other paths need similar |
-| `analyzer.py` | 205 | `complete_json` can return `{}` on parse failure — no validation |
-| `vl.py` | 73-74 | `asyncio` imported at bottom of file (style) |
-| `llm_client.py` | 191 | `asyncio` imported at bottom (style) |
+#### 12. **Нет стратегии миграций БД**
+При старте используется `Base.metadata.create_all()`. Нет alembic-миграций для изменений схемы.
 
 ---
 
-### 🧪 Testing Gaps
+### 📝 Проблемы качества кода
 
-| Component | Status |
+| Файл | Строки | Замечание |
+|------|-------|-------|
+| `store.py` | 110 | `_to_dict` использует `row.__table__.columns` — ломается на hybrid properties |
+| `agent.py` | 307-311 | `datetime.fromisoformat` на потенциально не-ISO строках |
+| `kafka_consumer.py` | 150-153 | Динамический импорт `from store import Finding` внутри функции |
+| `app.py` | 181-184 | Нормализация путей только для `/api/findings/{id}` — остальным путям нужно то же самое |
+| `analyzer.py` | 205 | `complete_json` может вернуть `{}` при ошибке парсинга — нет валидации |
+| `vl.py` | 73-74 | `asyncio` импортирован в конце файла (стиль) |
+| `llm_client.py` | 191 | `asyncio` импортирован в конце файла (стиль) |
+
+---
+
+### 🧪 Пробелы в тестировании
+
+| Компонент | Статус |
 |-----------|--------|
-| Unit tests | ❌ None |
-| Integration tests | ❌ None |
-| Contract tests (Kafka schemas) | ❌ None |
-| Load tests | ❌ None |
-| Chaos tests | ❌ None |
+| Юнит-тесты | ❌ Отсутствуют |
+| Интеграционные тесты | ❌ Отсутствуют |
+| Контрактные тесты (схемы Kafka) | ❌ Отсутствуют |
+| Нагрузочные тесты | ❌ Отсутствуют |
+| Хаос-тесты | ❌ Отсутствуют |
 
 ---
 
-### 🔒 Security Considerations
+### 🔒 Соображения безопасности
 
-| Area | Status | Notes |
-|------|--------|-------|
-| Basic Auth | ✅ Implemented | But credentials in env vars (consider Vault) |
-| TLS for Kafka | ❌ Not configured | PLAINTEXT only in compose |
-| TLS for PostgreSQL | ❌ Not configured | |
-| TLS for Victoria Logs | ⚠️ Depends on VL_URL | |
-| Secrets in logs | ⚠️ Possible | `log_requests` middleware logs body |
-| SQL Injection | ✅ Protected | SQLAlchemy ORM used |
-| XSS in Web UI | ⚠️ Possible | Jinja2 autoescape but markdown filter |
-
----
-
-## Recommended Action Plan
-
-### Priority 1 (Before Production)
-1. Fix deduplication race condition (DB constraint)
-2. Add Kafka DLQ for failed messages
-3. Implement persistent alert batching (Redis or DB)
-4. Add dependency health checks to `/api/health`
-5. Configure Kafka/PostgreSQL TLS
-
-### Priority 2 (Short Term)
-1. Reuse shared clients in Kafka consumer
-2. Add max retries + backoff to outbox processor
-3. Implement DB migration strategy (alembic)
-4. Add request timeouts for VL/LLM calls
-5. Fix LLM JSON parse error handling
-
-### Priority 3 (Technical Debt)
-1. Add unit/integration tests
-2. Move dynamic imports to module level
-3. Add path normalization for all metric endpoints
-4. Add LLM model version to metrics
-5. Sanitize request body logging
+| Область | Статус | Примечания |
+|------|--------|--------|
+| Basic Auth | ✅ Реализовано | Но учётные данные в переменных окружения (стоит рассмотреть Vault) |
+| TLS для Kafka | ❌ Не настроено | Только PLAINTEXT в compose |
+| TLS для PostgreSQL | ❌ Не настроено | |
+| TLS для Victoria Logs | ⚠️ Зависит от VL_URL | |
+| Секреты в логах | ⚠️ Возможно | Middleware `log_requests` логирует тело запроса |
+| SQL-инъекции | ✅ Защищено | Используется ORM SQLAlchemy |
+| XSS в веб-UI | ⚠️ Возможно | Autoescape в Jinja2, но есть markdown-фильтр |
 
 ---
 
-## File-by-File Summary
+## Рекомендуемый план действий
 
-| File | Lines | Status | Key Concerns |
+### Приоритет 1 (до production)
+1. Исправить гонку при дедупликации (constraint на уровне БД)
+2. Добавить DLQ в Kafka для ошибочных сообщений
+3. Реализовать персистентную батч-обработку алертов (Redis или БД)
+4. Добавить health-check зависимостей в `/api/health`
+5. Настроить TLS для Kafka/PostgreSQL
+
+### Приоритет 2 (краткосрочно)
+1. Переиспользовать общие клиенты в консюмере Kafka
+2. Добавить лимит повторов + backoff в обработчик outbox
+3. Внедрить стратегию миграций БД (alembic)
+4. Добавить таймауты запросов к VL/LLM
+5. Исправить обработку ошибок парсинга JSON от LLM
+
+### Приоритет 3 (технический долг)
+1. Добавить юнит-/интеграционные тесты
+2. Перенести динамические импорты на уровень модуля
+3. Добавить нормализацию путей для всех эндпоинтов метрик
+4. Добавить версию модели LLM в метрики
+5. Санитизировать логирование тела запросов
+
+---
+
+## Сводка по файлам
+
+| Файл | Строки | Статус | Основные проблемы |
 |------|-------|--------|--------------|
-| `sre-agent/app.py` | 310 | ✅ Good | Middleware order, auth bypass for metrics |
-| `sre-agent/agent.py` | 417 | ⚠️ Needs fixes | Race condition, error handling |
-| `sre-agent/store.py` | 282 | ✅ Good | Pool metrics, transactional outbox |
-| `sre-agent/kafka_producer.py` | 159 | ⚠️ Fix needed | New producer per poll |
-| `sre-agent/kafka_consumer.py` | 274 | ⚠️ Fix needed | New agent per worker |
-| `sre-agent/vl.py` | ~200 | ✅ Good | Circuit breaker, retry |
-| `sre-agent/llm.py` | 191 | ⚠️ Needs fix | JSON parse error handling |
-| `sre-agent/metrics.py` | 300+ | ✅ Excellent | Comprehensive |
-| `alert-analyzer/app.py` | 184 | ✅ Good | Auth, metrics, webhook |
-| `alert-analyzer/analyzer.py` | 273 | ⚠️ Fix needed | In-memory batcher, dedup |
-| `alert-analyzer/models.py` | ~100 | ✅ Good | Pydantic validation |
-| `alert-analyzer/store.py` | ~200 | ✅ Good | Async SQLAlchemy |
-| `common/llm_client.py` | 191 | ✅ Good | Shared, retry, metrics |
+| `sre-agent/app.py` | 310 | ✅ Хорошо | порядок middleware, обход auth для metrics |
+| `sre-agent/agent.py` | 417 | ⚠️ Нужны исправления | гонка, обработка ошибок |
+| `sre-agent/store.py` | 282 | ✅ Хорошо | метрики пула, transactional outbox |
+| `sre-agent/kafka_producer.py` | 159 | ⚠️ Нужно исправить | новый продюсер на каждый опрос |
+| `sre-agent/kafka_consumer.py` | 274 | ⚠️ Нужно исправить | новый Agent на каждого воркера |
+| `sre-agent/vl.py` | ~200 | ✅ Хорошо | circuit breaker, повторы |
+| `sre-agent/llm.py` | 191 | ⚠️ Нужно исправить | обработка ошибок парсинга JSON |
+| `sre-agent/metrics.py` | 300+ | ✅ Отлично | исчерпывающе |
+| `alert-analyzer/app.py` | 184 | ✅ Хорошо | auth, метрики, webhook |
+| `alert-analyzer/analyzer.py` | 273 | ⚠️ Нужно исправить | батчер в памяти, дедупликация |
+| `alert-analyzer/models.py` | ~100 | ✅ Хорошо | Pydantic-валидация |
+| `alert-analyzer/store.py` | ~200 | ✅ Хорошо | асинхронный SQLAlchemy |
+| `common/llm_client.py` | 191 | ✅ Хорошо | общий, повторы, метрики |
 
 ---
 
-## Metrics Coverage Summary
+## Сводка покрытия метриками
 
-| Category | Metrics | Coverage |
+| Категория | Метрик | Покрытие |
 |----------|---------|----------|
-| Scan | 9 | ✅ |
-| Findings | 5 | ✅ |
+| Скан | 9 | ✅ |
+| Находки | 5 | ✅ |
 | Victoria Logs | 4 | ✅ |
 | LLM | 7 | ✅ |
 | Kafka | 8 | ✅ |
-| Database | 4 | ✅ |
-| Blog | 4 | ✅ |
+| База данных | 4 | ✅ |
+| Блог | 4 | ✅ |
 | HTTP | 3 | ✅ |
-| Alerts | 7 | ✅ |
-| System | 2 | ✅ |
-| **Total** | **53+** | **Excellent** |
+| Алерты | 7 | ✅ |
+| Система | 2 | ✅ |
+| **Итого** | **53+** | **Отлично** |
 
 ---
 
-## Next Steps
+## Следующие шаги
 
-1. **Create GitHub issues** for each Priority 1 item
-2. **Set up CI/CD** with linting (ruff), type checking (mypy), tests
-3. **Add pre-commit hooks** for code quality
-4. **Document deployment** (Ansible playbooks, secrets management)
-5. **Run integration tests** with testcontainers for PostgreSQL/Kafka
+1. **Создать GitHub issues** по каждому пункту Приоритета 1
+2. **Настроить CI/CD** с линтингом (ruff), проверкой типов (mypy), тестами
+3. **Добавить pre-commit hooks** для контроля качества кода
+4. **Задокументировать деплой** (Ansible playbook'и, управление секретами)
+5. **Запустить интеграционные тесты** с testcontainers для PostgreSQL/Kafka
